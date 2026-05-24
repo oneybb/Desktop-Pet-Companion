@@ -43,6 +43,20 @@ export interface CustomFeature {
   };
 }
 
+export interface FoodItem {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  statsBonus: {
+    happiness: number;
+    hunger: number;
+    energy: number;
+    cleanliness: number;
+    love: number;
+  };
+}
+
 export interface CustomAssets {
   useWorkspace: boolean; // if true, uses public/ assets
   workspacePaths: {
@@ -62,6 +76,7 @@ export interface CustomAssets {
   activeIndices: Record<string, number>; // index mapping
   playModes: Record<string, 'cycle' | 'random'>; // button-specific play modes!
   customFeatures: CustomFeature[];
+  foods: FoodItem[];
 }
 
 export interface WidgetCustomizer {
@@ -71,4 +86,12 @@ export interface WidgetCustomizer {
   borderStyle: 'none' | 'thin' | 'double' | 'retro';
   soundVolume: number; // 0 to 1
   alwaysOnTopGuide: boolean;
+}
+
+export interface DesktopPetSeed {
+  stats: PetStats;
+  customizer: WidgetCustomizer;
+  customDuration: number;
+  assets: CustomAssets;
+  exportedAt: string;
 }

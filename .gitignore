@@ -1,7 +1,10 @@
 node_modules/
 build/
 dist/
+release/
 coverage/
+public/exported-assets/
+public/desktop-pet-seed.json
 .DS_Store
 *.log
 .env*

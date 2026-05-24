@@ -4,7 +4,8 @@
  */
 
 import React, { useRef, useState } from 'react';
-import { CustomAssets, WidgetCustomizer, UploadedFile } from '../types';
+import { CustomAssets, WidgetCustomizer, UploadedFile, PetStats, FoodItem } from '../types';
+import { getFoodAssetKey } from '../defaults';
 import { 
   Upload, 
   Monitor, 
@@ -24,6 +25,7 @@ interface CustomizerPanelProps {
   setCustomizer: React.Dispatch<React.SetStateAction<WidgetCustomizer>>;
   assets: CustomAssets;
   setAssets: React.Dispatch<React.SetStateAction<CustomAssets>>;
+  stats: PetStats;
   onResetStats: () => void;
   customDuration?: number;
   setCustomDuration?: (val: number) => void;
@@ -34,12 +36,18 @@ export default function CustomizerPanel({
   setCustomizer,
   assets,
   setAssets,
+  stats,
   onResetStats,
   customDuration = 5,
   setCustomDuration,
 }: CustomizerPanelProps) {
-  const [activeTab, setActiveTab] = useState<'visuals' | 'uploads' | 'windows'>('visuals');
+  const [activeTab, setActiveTab] = useState<'visuals' | 'uploads' | 'foods' | 'windows'>('visuals');
   const [copiedName, setCopiedName] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<string>('');
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [newFoodName, setNewFoodName] = useState('');
+  const [newFoodEmoji, setNewFoodEmoji] = useState('🍪');
+  const [newFoodDescription, setNewFoodDescription] = useState('');
 
   // File loading inputs
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -190,10 +198,140 @@ export default function CustomizerPanel({
     });
   };
 
+  const handleAddFood = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFoodName.trim()) return;
+
+    const id = `food_${Date.now().toString(36)}`;
+    const key = getFoodAssetKey(id);
+    const food: FoodItem = {
+      id,
+      name: newFoodName.trim(),
+      emoji: newFoodEmoji.trim() || '🍪',
+      description: newFoodDescription.trim() || 'Custom snack',
+      statsBonus: { happiness: 5, hunger: -20, energy: 5, cleanliness: 0, love: 8 },
+    };
+
+    setAssets((prev) => ({
+      ...prev,
+      foods: [...(prev.foods || []), food],
+      uploadedAssets: {
+        ...prev.uploadedAssets,
+        [key]: [],
+      },
+      activeIndices: {
+        ...prev.activeIndices,
+        [key]: 0,
+      },
+      playModes: {
+        ...prev.playModes,
+        [key]: 'cycle',
+      },
+    }));
+
+    setNewFoodName('');
+    setNewFoodEmoji('🍪');
+    setNewFoodDescription('');
+  };
+
+  const updateFood = (foodId: string, patch: Partial<FoodItem>) => {
+    setAssets((prev) => ({
+      ...prev,
+      foods: (prev.foods || []).map((food) => (
+        food.id === foodId ? { ...food, ...patch } : food
+      )),
+    }));
+  };
+
+  const updateFoodStats = (foodId: string, stat: keyof FoodItem['statsBonus'], value: number) => {
+    setAssets((prev) => ({
+      ...prev,
+      foods: (prev.foods || []).map((food) => (
+        food.id === foodId
+          ? { ...food, statsBonus: { ...food.statsBonus, [stat]: value } }
+          : food
+      )),
+    }));
+  };
+
+  const handleDeleteFood = (foodId: string) => {
+    const key = getFoodAssetKey(foodId);
+    setAssets((prev) => {
+      const uploadedAssets = { ...prev.uploadedAssets };
+      const activeIndices = { ...prev.activeIndices };
+      const playModes = { ...prev.playModes };
+      delete uploadedAssets[key];
+      delete activeIndices[key];
+      delete playModes[key];
+
+      return {
+        ...prev,
+        foods: (prev.foods || []).filter((food) => food.id !== foodId),
+        uploadedAssets,
+        activeIndices,
+        playModes,
+      };
+    });
+  };
+
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedName(text);
     setTimeout(() => setCopiedName(null), 2000);
+  };
+
+  const readBlobAsDataUrl = (blob: Blob) => {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  const handleExportDesktopApp = async () => {
+    setDownloadUrl(null);
+    setExportStatus('Collecting uploaded images and settings...');
+
+    try {
+      const { getAllFilesFromDB } = await import('../utils/db');
+      const dbFiles = await getAllFilesFromDB();
+      const files = await Promise.all(
+        dbFiles.map(async (file) => ({
+          feature: file.feature,
+          id: file.id,
+          name: file.name,
+          type: file.type,
+          mimeType: file.blob.type || (file.type === 'video' ? 'video/mp4' : 'image/png'),
+          dataUrl: await readBlobAsDataUrl(file.blob),
+        })),
+      );
+
+      setExportStatus('Building your floating desktop app. This may take a few minutes...');
+
+      const response = await fetch('http://localhost:5174/api/export-desktop-app', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stats,
+          customizer,
+          customDuration,
+          assets,
+          files,
+        }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result?.error || 'Failed to build desktop app.');
+      }
+
+      setDownloadUrl(`http://localhost:5174${result.downloadUrl}`);
+      setExportStatus(`Done. Built ${result.fileName}.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown export error.';
+      setExportStatus(`Export failed: ${message}`);
+    }
   };
 
   const workspaceFileSpecs = [
@@ -254,6 +392,14 @@ export default function CustomizerPanel({
             }`}
           >
             Custom Assets
+          </button>
+          <button
+            onClick={() => setActiveTab('foods')}
+            className={`px-3 py-1 rounded-md transition-all font-medium ${
+              activeTab === 'foods' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Food
           </button>
           <button
             onClick={() => setActiveTab('windows')}
@@ -714,39 +860,195 @@ export default function CustomizerPanel({
           </div>
         )}
 
+        {activeTab === 'foods' && (
+          <div className="space-y-5 animate-fade-in text-[12px]">
+            <div className="bg-amber-50/70 border border-amber-100 rounded-xl p-3.5 space-y-3">
+              <h4 className="font-black text-amber-900 text-xs uppercase tracking-wider">Customize Food Tray</h4>
+              <p className="text-[11px] text-slate-600">
+                Each food appears as a draggable emoji in the widget. Upload media for a food to play that specific image or video when it is dropped onto the cat.
+              </p>
+              <form onSubmit={handleAddFood} className="grid grid-cols-12 gap-2 items-end">
+                <div className="col-span-2 space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">Emoji</label>
+                  <input
+                    value={newFoodEmoji}
+                    onChange={(e) => setNewFoodEmoji(e.target.value)}
+                    className="w-full bg-white border border-amber-200 rounded px-2 py-1 text-xs"
+                  />
+                </div>
+                <div className="col-span-4 space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">Food Name</label>
+                  <input
+                    required
+                    value={newFoodName}
+                    onChange={(e) => setNewFoodName(e.target.value)}
+                    placeholder="e.g. Tuna Bites"
+                    className="w-full bg-white border border-amber-200 rounded px-2 py-1 text-xs"
+                  />
+                </div>
+                <div className="col-span-4 space-y-1">
+                  <label className="text-[10px] font-bold text-slate-500 uppercase block">Description</label>
+                  <input
+                    value={newFoodDescription}
+                    onChange={(e) => setNewFoodDescription(e.target.value)}
+                    placeholder="Short tray hint"
+                    className="w-full bg-white border border-amber-200 rounded px-2 py-1 text-xs"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="col-span-2 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-extrabold rounded-lg shadow-sm transition-all cursor-pointer text-xs"
+                >
+                  Add Food
+                </button>
+              </form>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+              {(assets.foods || []).map((food) => {
+                const key = getFoodAssetKey(food.id);
+                const media = assets.uploadedAssets[key] || [];
+                return (
+                  <div key={food.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-3">
+                    <div className="grid grid-cols-12 gap-2 items-center">
+                      <input
+                        value={food.emoji}
+                        onChange={(e) => updateFood(food.id, { emoji: e.target.value })}
+                        className="col-span-1 bg-white border border-slate-200 rounded px-2 py-1 text-center text-sm"
+                      />
+                      <input
+                        value={food.name}
+                        onChange={(e) => updateFood(food.id, { name: e.target.value })}
+                        className="col-span-3 bg-white border border-slate-200 rounded px-2 py-1 text-xs font-bold"
+                      />
+                      <input
+                        value={food.description}
+                        onChange={(e) => updateFood(food.id, { description: e.target.value })}
+                        className="col-span-5 bg-white border border-slate-200 rounded px-2 py-1 text-xs"
+                      />
+                      <label className="col-span-2 text-center text-[10px] py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded font-bold transition-all cursor-pointer flex items-center justify-center gap-1">
+                        <Upload className="w-2.5 h-2.5" /> Upload Media
+                        <input
+                          type="file"
+                          accept="image/*,video/*"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(key, e)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (confirm(`Delete food "${food.name}" and its media references?`)) {
+                            handleDeleteFood(food.id);
+                          }
+                        }}
+                        className="col-span-1 p-1.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg text-rose-600 transition-colors cursor-pointer"
+                        title="Delete food"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 mx-auto" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-5 gap-1.5 text-center text-[10px]">
+                      {[
+                        ['love', 'Love'],
+                        ['happiness', 'Happy'],
+                        ['hunger', 'Hunger'],
+                        ['energy', 'Energy'],
+                        ['cleanliness', 'Clean'],
+                      ].map(([stat, label]) => (
+                        <label key={stat} className="space-y-0.5 text-slate-500 font-bold">
+                          <span>{label}</span>
+                          <input
+                            type="number"
+                            value={food.statsBonus[stat as keyof FoodItem['statsBonus']]}
+                            onChange={(e) => updateFoodStats(food.id, stat as keyof FoodItem['statsBonus'], Number(e.target.value))}
+                            className="w-full bg-white border border-slate-200 rounded p-0.5 text-center font-bold text-xs"
+                          />
+                        </label>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 text-[9px]">
+                      {media.length === 0 ? (
+                        <span className="text-slate-400 italic">No custom media yet. This food uses the default eating pose.</span>
+                      ) : (
+                        media.map((file) => (
+                          <span key={file.id} className="bg-white border border-slate-200 rounded-full px-2 py-0.5 text-slate-500 font-semibold">
+                            {file.type === 'video' ? '📹' : '🖼️'} {file.name}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {activeTab === 'windows' && (
           <div className="space-y-4 animate-fade-in text-[12px]">
+            <div className="bg-indigo-50/70 p-3.5 rounded-xl border border-indigo-100/80 space-y-3">
+              <h4 className="font-bold text-indigo-900 text-xs flex items-center gap-2">
+                <Monitor className="w-4 h-4 text-indigo-600" />
+                DOWNLOAD AS FLOATING DESKTOP WIDGET
+              </h4>
+              <p className="text-slate-600 leading-relaxed text-[11px]">
+                Bundles your current uploaded images, play modes, stats, and visual settings into an Electron desktop widget app. Keep the local export server running with <code className="bg-white px-1 py-0.5 rounded font-mono">npm run dev:export</code>.
+              </p>
+              <button
+                type="button"
+                onClick={handleExportDesktopApp}
+                className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold rounded-xl shadow-md transition-all cursor-pointer text-center text-xs uppercase"
+              >
+                Build Downloadable Widget App
+              </button>
+              {exportStatus && (
+                <div className="text-[10px] text-slate-600 bg-white/80 border border-indigo-100 rounded-lg p-2 font-medium">
+                  {exportStatus}
+                </div>
+              )}
+              {downloadUrl && (
+                <a
+                  href={downloadUrl}
+                  className="block w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-xl shadow-md transition-all text-center text-xs uppercase"
+                >
+                  Download Built App
+                </a>
+              )}
+            </div>
+
             <div className="bg-emerald-50/70 p-3.5 rounded-xl border border-emerald-100/80 space-y-2">
               <h4 className="font-bold text-emerald-900 text-xs flex items-center gap-2">
                 <Monitor className="w-4 h-4 text-emerald-600" />
-                WINDOWS OPTIMIZATION GUIDE
+                DESKTOP APP NOTES
               </h4>
               <p className="text-slate-600 leading-relaxed text-[11px]">
-                To satisfy: <strong>"make this compatible for windows, with smallest ram and storage needed"</strong>.
-                <br /><br />
-                Instead of installing heavy Electron engines which consume 200MB of storage and 400MB of RAM, we utilize the Microsoft Edge engine natively!
+                The export builds for the computer running this project. On macOS it creates Mac artifacts; on Windows it creates Windows artifacts. Cross-building Windows from macOS can require extra tools.
               </p>
             </div>
 
             <div className="space-y-1.5 text-slate-700 list-decimal pl-1">
               <div className="bg-slate-50 hover:bg-slate-100 p-2.5 rounded-lg border border-slate-200 transition-all">
-                <div className="font-bold text-slate-800 text-[11px]">1. Open in Edge or Chrome</div>
-                <div className="text-[10px] text-slate-500 mt-0.5">Open this web preview inside chromium-based Windows browsers.</div>
+                <div className="font-bold text-slate-800 text-[11px]">1. Upload and configure</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">Use the Custom Assets and Visuals tabs to set the pet images, play mode, theme, and size.</div>
               </div>
 
               <div className="bg-slate-50 hover:bg-slate-100 p-2.5 rounded-lg border border-slate-200 transition-all animate-delay-1">
-                <div className="font-bold text-slate-800 text-[11px]">2. Install as PWA Desktop App</div>
-                <div className="text-[10px] text-slate-500 mt-0.5">Click the small app-icon in the right end of the address bar, or click edge menu and click <span className="font-medium text-indigo-600">"Apps - Install this site as an app"</span>.</div>
+                <div className="font-bold text-slate-800 text-[11px]">2. Build the desktop app</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">Click the build button above. The local export server writes a bundled seed file and packaged assets before running Electron Builder.</div>
               </div>
 
               <div className="bg-slate-50 hover:bg-slate-100 p-2.5 rounded-lg border border-slate-200 transition-all animate-delay-2">
-                <div className="font-bold text-slate-800 text-[11px]">3. Enable Sticky Overlay pin</div>
-                <div className="text-[10px] text-slate-500 mt-0.5">We support a "Sticky Overlay Mode" with 40% window transparency that allows your pet to sit neatly in the bottom right corner above code editors.</div>
+                <div className="font-bold text-slate-800 text-[11px]">3. Install and run</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">The generated app starts directly in transparent floating widget mode with your bundled images and interactions.</div>
               </div>
             </div>
 
             <div className="bg-blue-50/50 p-2 rounded-lg border border-blue-100 text-[11px] text-blue-700">
-              💡 <strong>RAM/Storage stats:</strong> PWA installed size is less than 50KB (reusing standard system WebView2 runtime) and consumes less than 15MB RAM!
+              💡 <strong>Note:</strong> The downloadable app includes Electron, so it is much larger than the web preview but works as a real floating desktop window.
             </div>
           </div>
         )}

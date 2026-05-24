@@ -4,11 +4,11 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { PetState, PetStats, CustomAssets, WidgetCustomizer, UploadedFile, TimerMode } from './types';
+import { PetState, PetStats, CustomAssets, WidgetCustomizer, UploadedFile, DesktopPetSeed } from './types';
 import PetWidget from './components/PetWidget';
-import FocusTimer from './components/FocusTimer';
 import StatsAndActivities from './components/StatsAndActivities';
 import CustomizerPanel from './components/CustomizerPanel';
+import { DEFAULT_FOODS, getFoodAssetKey } from './defaults';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Heart, 
@@ -18,11 +18,14 @@ import {
   HelpCircle,
   Clock,
   Zap,
-  Grid,
   Award
 } from 'lucide-react';
 
 export default function App() {
+  const isDesktopWidget =
+    new URLSearchParams(window.location.search).get('widget') === '1' ||
+    window.desktopPet?.isDesktopApp === true;
+
   // 1. Initialize statistics from localStorage or use defaults
   const [stats, setStats] = useState<PetStats>(() => {
     const saved = localStorage.getItem('desktop_pet_stats_data');
@@ -71,6 +74,13 @@ export default function App() {
           if (!parsed.playModes.rest) parsed.playModes.rest = 'cycle';
 
           if (!parsed.customFeatures) parsed.customFeatures = [];
+          if (!parsed.foods) parsed.foods = DEFAULT_FOODS;
+          parsed.foods.forEach((food: any) => {
+            const key = getFoodAssetKey(food.id);
+            if (!parsed.uploadedAssets[key]) parsed.uploadedAssets[key] = [];
+            if (parsed.activeIndices[key] === undefined) parsed.activeIndices[key] = 0;
+            if (!parsed.playModes[key]) parsed.playModes[key] = 'cycle';
+          });
           if (!parsed.workspacePaths) {
             parsed.workspacePaths = {
               idle: '/pet_idle.png',
@@ -121,6 +131,7 @@ export default function App() {
         dancing: [],
         petting: [],
         licking: [],
+        ...Object.fromEntries(DEFAULT_FOODS.map((food) => [getFoodAssetKey(food.id), []])),
       },
       activeIndices: {
         idle: 0,
@@ -132,6 +143,7 @@ export default function App() {
         dancing: 0,
         petting: 0,
         licking: 0,
+        ...Object.fromEntries(DEFAULT_FOODS.map((food) => [getFoodAssetKey(food.id), 0])),
       },
       playModes: {
         idle: 'cycle',
@@ -143,8 +155,10 @@ export default function App() {
         dancing: 'cycle',
         petting: 'cycle',
         licking: 'cycle',
+        ...Object.fromEntries(DEFAULT_FOODS.map((food) => [getFoodAssetKey(food.id), 'cycle' as const])),
       },
       customFeatures: [],
+      foods: DEFAULT_FOODS,
     };
   });
 
@@ -211,7 +225,7 @@ export default function App() {
   const [interactState, setInteractState] = useState<PetState>('idle');
   const [laserMode, setLaserMode] = useState(false);
   const [showConfig, setShowConfig] = useState(true);
-  const [compactWidgetMode, setCompactWidgetMode] = useState(false);
+  const [compactWidgetMode, setCompactWidgetMode] = useState(isDesktopWidget);
   const [isWidgetHovered, setIsWidgetHovered] = useState(false);
   const resetTimeoutRef = useRef<any>(null);
   const [showFocusRewardModal, setShowFocusRewardModal] = useState(false);
@@ -222,10 +236,32 @@ export default function App() {
     return saved ? Math.max(1, Math.min(600, parseInt(saved) || 5)) : 5;
   });
 
-  // Shared Pomodoro Timer States across Widget and sidebar!
-  const [timerMode, setTimerMode] = useState<TimerMode>('study');
-  const [timeLeft, setTimeLeft] = useState(25 * 60);
-  const [timerActive, setTimerActive] = useState(false);
+  useEffect(() => {
+    const loadBundledExport = async () => {
+      try {
+        const response = await fetch('./desktop-pet-seed.json', { cache: 'no-store' });
+        if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
+          return;
+        }
+
+        const seed = (await response.json()) as DesktopPetSeed;
+        if (!seed.assets || !seed.customizer || !seed.stats) {
+          return;
+        }
+
+        setStats(seed.stats);
+        setAssets(seed.assets);
+        setCustomizer(seed.customizer);
+        setCustomDuration(Math.max(1, Math.min(600, seed.customDuration || 5)));
+      } catch (err) {
+        // Most local/dev runs do not include an exported seed file.
+      }
+    };
+
+    if (isDesktopWidget) {
+      loadBundledExport();
+    }
+  }, [isDesktopWidget]);
 
   // Persist customized timer default duration
   useEffect(() => {
@@ -289,24 +325,6 @@ export default function App() {
 
     return () => clearInterval(tickInterval);
   }, []);
-
-  // Synchronize Active Timer states (studying, shortBreak, rest) to pet representation when running
-  useEffect(() => {
-    if (timerActive) {
-      if (timerMode === 'study') {
-        setInteractState('studying');
-      } else if (timerMode === 'shortBreak') {
-        setInteractState('shortBreak');
-      } else if (timerMode === 'longBreak') {
-        setInteractState('rest');
-      }
-    } else {
-      // If timer paused or completed, return to idle (if pet is studying/shortBreak/rest)
-      if (interactState === 'studying' || interactState === 'shortBreak' || interactState === 'rest') {
-        setInteractState('idle');
-      }
-    }
-  }, [timerActive, timerMode]);
 
   // Set transient pet states with helper reset timers
   const triggerInteractState = (state: PetState, durationMs: number = 3000) => {
@@ -377,14 +395,6 @@ export default function App() {
     triggerInteractState('focusReward', 10000); // Trigger Focus celebration pose for 10 seconds
   };
 
-  const handleAddTaskHappiness = () => {
-    setStats((prev) => ({
-      ...prev,
-      happiness: Math.min(100, prev.happiness + 10),
-      love: prev.love + 10,
-    }));
-  };
-
   const handleResetStats = () => {
     setStats({
       happiness: 85,
@@ -450,20 +460,29 @@ export default function App() {
         >
           {/* Floating Hover Controls Banner - Fades in automatically on mouse over */}
           <div 
-            className={`absolute top-4 bg-slate-900/90 text-white border border-slate-800 px-4 py-2 rounded-2xl shadow-xl flex items-center gap-3.5 backdrop-blur-md transition-all duration-300 z-50 ${
+            className={`absolute top-4 electron-drag-region bg-slate-900/90 text-white border border-slate-800 px-4 py-2 rounded-2xl shadow-xl flex items-center gap-3.5 backdrop-blur-md transition-all duration-300 z-50 ${
               isWidgetHovered ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
             }`}
           >
             <div className="text-[10px] font-bold text-slate-300">
-              🐱 Tabby Companion Widget Mode
+              🐱 Drag Tabby Companion
             </div>
             <div className="h-4 w-px bg-slate-700" />
-            <button
-              onClick={() => setCompactWidgetMode(false)}
-              className="text-[10px] font-black bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded-lg transition-all cursor-pointer"
-            >
-              Exit Widget Mode ⚙️
-            </button>
+            {isDesktopWidget ? (
+              <button
+                onClick={() => window.desktopPet?.close()}
+                className="electron-no-drag text-[10px] font-black bg-rose-600 hover:bg-rose-500 text-white px-3 py-1 rounded-lg transition-all cursor-pointer"
+              >
+                Quit
+              </button>
+            ) : (
+              <button
+                onClick={() => setCompactWidgetMode(false)}
+                className="electron-no-drag text-[10px] font-black bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded-lg transition-all cursor-pointer"
+              >
+                Exit Widget Mode ⚙️
+              </button>
+            )}
           </div>
 
           <PetWidget
@@ -477,12 +496,9 @@ export default function App() {
             stats={stats}
             setStats={setStats}
             compactMode={true}
-            timerActive={timerActive}
-            setTimerActive={setTimerActive}
-            timerMode={timerMode}
-            setTimerMode={setTimerMode}
             customDuration={customDuration}
             setCustomDuration={setCustomDuration}
+            onFocusComplete={handleFocusCompleted}
           />
 
           {/* Hidden Double-click instructional overlay hint - fades out very cleanly */}
@@ -491,7 +507,7 @@ export default function App() {
               isWidgetHovered ? 'opacity-100' : 'opacity-0'
             }`}
           >
-            Hover near cat to exit widget mode
+            {isDesktopWidget ? 'Hover at top to drag or quit' : 'Hover near cat to exit widget mode'}
           </div>
         </div>
       ) : (
@@ -499,7 +515,7 @@ export default function App() {
         <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start h-full self-center">
           <>
             {/* Visualizer and Customizer controls */}
-            <div className="lg:col-span-4 space-y-6">
+            <div className="lg:col-span-6 space-y-6">
               <div className="bg-white/95 border border-slate-200 rounded-3xl p-4 shadow-sm">
                 <div className="flex justify-between items-center mb-1">
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest block">Virtual Companion view</h3>
@@ -519,12 +535,9 @@ export default function App() {
                   onLoveIncrease={handleLoveIncrease}
                   stats={stats}
                   setStats={setStats}
-                  timerActive={timerActive}
-                  setTimerActive={setTimerActive}
-                  timerMode={timerMode}
-                  setTimerMode={setTimerMode}
                   customDuration={customDuration}
                   setCustomDuration={setCustomDuration}
+                  onFocusComplete={handleFocusCompleted}
                 />
               </div>
 
@@ -548,6 +561,7 @@ export default function App() {
                   setCustomizer={setCustomizer}
                   assets={assets}
                   setAssets={setAssets}
+                  stats={stats}
                   onResetStats={handleResetStats}
                   customDuration={customDuration}
                   setCustomDuration={setCustomDuration}
@@ -555,22 +569,8 @@ export default function App() {
               )}
             </div>
 
-            {/* Central Work Focus Station with Pomodoro and synthesizer noise */}
-            <div className="lg:col-span-4 h-full">
-              <FocusTimer
-                onFocusComplete={handleFocusCompleted}
-                onAddTaskHappiness={handleAddTaskHappiness}
-                timerActive={timerActive}
-                setTimerActive={setTimerActive}
-                timerMode={timerMode}
-                setTimerMode={setTimerMode}
-                timeLeft={timeLeft}
-                setTimeLeft={setTimeLeft}
-              />
-            </div>
-
             {/* Stats list and Interactive play controllers */}
-            <div className="lg:col-span-4 h-full">
+            <div className="lg:col-span-6 h-full">
               <StatsAndActivities
                 stats={stats}
                 setStats={setStats}

@@ -1,5 +1,12 @@
 /// <reference types="vite/client" />
 
+interface Window {
+  desktopPet?: {
+    isDesktopApp: boolean;
+    close: () => void;
+  };
+}
+
 declare module "*.png" {
   const src: string;
   export default src;

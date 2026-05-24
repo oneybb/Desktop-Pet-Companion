@@ -1,1 +1,21 @@
 @import "tailwindcss";
+
+html,
+body,
+#root {
+  background: transparent;
+}
+
+.electron-drag-region {
+  -webkit-app-region: drag;
+}
+
+.electron-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.widget-resize-handle,
+.interaction-resize-handle {
+  -webkit-app-region: no-drag;
+  touch-action: none;
+}

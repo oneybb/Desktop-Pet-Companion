@@ -4,9 +4,10 @@ interface TransparentCatImageProps {
   src: string;
   alt: string;
   className?: string;
+  style?: React.CSSProperties;
 }
 
-export default function TransparentCatImage({ src, alt, className }: TransparentCatImageProps) {
+export default function TransparentCatImage({ src, alt, className, style }: TransparentCatImageProps) {
   const [processedSrc, setProcessedSrc] = useState<string>(src);
 
   useEffect(() => {
@@ -74,6 +75,7 @@ export default function TransparentCatImage({ src, alt, className }: Transparent
       alt={alt}
       referrerPolicy="no-referrer"
       className={className}
+      style={style}
     />
   );
 }
