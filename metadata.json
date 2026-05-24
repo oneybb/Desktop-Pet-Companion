@@ -1,0 +1,6 @@
+{
+  "name": "Desktop Pet Companion",
+  "description": "A lightweight, interactive virtual desktop pet widget and focus companion with custom assets loader, interactive laser play, focus timers, and a Web Audio ambient noise generator.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
