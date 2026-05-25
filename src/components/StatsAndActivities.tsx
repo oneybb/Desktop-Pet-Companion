@@ -6,7 +6,13 @@
 import React, { useState } from 'react';
 import { PetStats, PetState, CustomAssets, CustomFeature, CompanionSettings, FoodItem } from '../types';
 import { DEFAULT_FOODS, getFoodAssetKey } from '../defaults';
-import { formatStatScore, FOCUS_REFERENCE_MINUTES } from '../utils/companionSettings';
+import {
+  formatStatScore,
+  formatDurationSeconds,
+  durationToSeconds,
+  applyActivityStatBonus,
+  FOCUS_REFERENCE_MINUTES,
+} from '../utils/companionSettings';
 import {
   Heart,
   Sparkles,
@@ -32,6 +38,11 @@ interface StatsAndActivitiesProps {
   setCustomDuration: (val: number) => void;
   companionSettings: CompanionSettings;
   setCompanionSettings: React.Dispatch<React.SetStateAction<CompanionSettings>>;
+  sleepActive: boolean;
+  sleepRemaining: number;
+  onStartSleep: (totalSeconds: number) => void;
+  onWakeUp: () => void;
+  onReturnToIdle: () => void;
 }
 
 export default function StatsAndActivities({
@@ -46,39 +57,34 @@ export default function StatsAndActivities({
   setCustomDuration,
   companionSettings,
   setCompanionSettings,
+  sleepActive,
+  sleepRemaining,
+  onStartSleep,
+  onWakeUp,
+  onReturnToIdle,
 }: StatsAndActivitiesProps) {
   const [selectedFood, setSelectedFood] = useState<string>('fish');
   const [showCompanionSettings, setShowCompanionSettings] = useState(false);
+  const [sleepHours, setSleepHours] = useState(0);
+  const [sleepMinutes, setSleepMinutes] = useState(30);
+  const [sleepSeconds, setSleepSeconds] = useState(0);
 
   const foods: FoodItem[] = assets?.foods || DEFAULT_FOODS;
-  const { snackInventory, decayPerHour, focusRewardPer25Min, initialSnackCounts } = companionSettings;
+  const { petName, snackInventory, decayPerHour, focusRewardPer25Min, activityRewards, initialSnackCounts } =
+    companionSettings;
 
   const applyFoodBonuses = (food: FoodItem) => {
-    const b = food.statsBonus;
-    setStats((prev) => ({
-      ...prev,
-      love: prev.love + (b.love || 0),
-      happiness: Math.min(100, Math.max(0, prev.happiness + (b.happiness || 0))),
-      energy: Math.min(100, Math.max(0, prev.energy + (b.energy || 0))),
-      cleanliness: Math.min(100, Math.max(0, prev.cleanliness + (b.cleanliness || 0))),
-      hunger: Math.max(0, Math.min(100, prev.hunger + (b.hunger || 0))),
-    }));
+    applyActivityStatBonus(food.statsBonus, setStats);
   };
 
   const handlePetThePet = () => {
-    setStats((prev) => ({
-      ...prev,
-      happiness: Math.min(100, prev.happiness + 15),
-    }));
+    applyActivityStatBonus(activityRewards.petting, setStats);
     setLaserMode(false);
     setInteractState('petting', customDuration * 1000);
   };
 
   const handleLickFur = () => {
-    setStats((prev) => ({
-      ...prev,
-      cleanliness: Math.min(100, prev.cleanliness + 25),
-    }));
+    applyActivityStatBonus(activityRewards.licking, setStats);
     setLaserMode(false);
     setInteractState('licking', customDuration * 1000);
   };
@@ -101,38 +107,32 @@ export default function StatsAndActivities({
   };
 
   const handleDance = () => {
-    setStats((prev) => ({
-      ...prev,
-      happiness: Math.min(100, prev.happiness + 25),
-      energy: Math.max(0, prev.energy - 15),
-    }));
+    applyActivityStatBonus(activityRewards.dancing, setStats);
     setLaserMode(false);
     setInteractState('dancing', customDuration * 1000);
   };
 
-  const handleNap = () => {
-    setStats((prev) => ({
-      ...prev,
-      energy: Math.min(100, prev.energy + 45),
-    }));
+  const handleStartNap = () => {
     setLaserMode(false);
-    setInteractState('studying', customDuration * 1000);
+    onStartSleep(durationToSeconds(sleepHours, sleepMinutes, sleepSeconds));
   };
+
+  const isBusy =
+    sleepActive ||
+    laserMode ||
+    (currentInteractState !== 'idle' && currentInteractState !== 'laser');
 
   const handleToggleLaser = () => {
     const nextLaser = !laserMode;
     setLaserMode(nextLaser);
+    if (nextLaser) {
+      applyActivityStatBonus(activityRewards.laser, setStats);
+    }
     setInteractState(nextLaser ? 'laser' : 'idle');
   };
 
   const handlePlayCustomFeature = (feature: CustomFeature) => {
-    const bonuses = feature.statsBonus;
-    setStats((prev) => ({
-      ...prev,
-      happiness: Math.min(100, Math.max(0, prev.happiness + (bonuses.happiness || 0))),
-      energy: Math.min(100, Math.max(0, prev.energy + (bonuses.energy || 0))),
-      cleanliness: Math.min(100, Math.max(0, prev.cleanliness + (bonuses.cleanliness || 0))),
-    }));
+    applyActivityStatBonus(feature.statsBonus, setStats);
     setLaserMode(false);
     setInteractState(feature.id, customDuration * 1000);
   };
@@ -192,7 +192,6 @@ export default function StatsAndActivities({
     { label: 'Happy', emoji: '😊', value: stats.happiness, className: 'bg-emerald-50 border-emerald-100 text-emerald-700' },
     { label: 'Clean', emoji: '✨', value: stats.cleanliness, className: 'bg-indigo-50 border-indigo-100 text-indigo-700' },
     { label: 'Energy', emoji: '⚡', value: stats.energy, className: 'bg-amber-50 border-amber-100 text-amber-700' },
-    { label: 'Hunger', emoji: '🍽️', value: stats.hunger, className: 'bg-rose-50 border-rose-100 text-rose-700' },
   ];
 
   return (
@@ -204,18 +203,17 @@ export default function StatsAndActivities({
               Current Companion Status
             </span>
             <h3 className="text-sm font-black text-indigo-900 tracking-tight flex items-center gap-1.5 mt-0.5">
-              <Sparkles className="w-4 h-4 text-indigo-500 animate-pulse" /> Score 1–100
+              <Sparkles className="w-4 h-4 text-indigo-500 animate-pulse" /> {petName}
             </h3>
           </div>
           <div className="text-right">
             <span className="text-[10px] font-mono font-bold text-slate-500">
               {stats.completedSessions} focus sessions
             </span>
-            <div className="text-[9px] text-rose-500 font-bold">♥ {Math.round(stats.love)} love</div>
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-2 text-[10px] font-bold">
+        <div className="grid grid-cols-3 gap-2 text-[10px] font-bold">
           {statTiles.map((t) => (
             <div key={t.label} className={`border rounded-xl p-2 ${t.className}`}>
               {t.emoji} {t.label}{' '}
@@ -257,7 +255,7 @@ export default function StatsAndActivities({
           className="w-full flex items-center justify-center gap-2 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-wider text-slate-600 cursor-pointer transition-all"
         >
           <Settings2 className="w-3.5 h-3.5" />
-          {showCompanionSettings ? 'Hide' : 'Show'} decay, focus rewards & snack defaults
+          {showCompanionSettings ? 'Hide' : 'Show'} decay, focus rewards & snack stock
         </button>
 
         {showCompanionSettings && (
@@ -266,7 +264,7 @@ export default function StatsAndActivities({
               <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider flex items-center gap-1">
                 <Timer className="w-3 h-3" /> Hourly decay (points lost/gained per hour)
               </span>
-              {(['happiness', 'energy', 'cleanliness', 'hunger'] as const).map((key) => (
+              {(['happiness', 'energy', 'cleanliness'] as const).map((key) => (
                 <label key={key} className="flex items-center justify-between gap-2 text-[10px] font-bold capitalize">
                   <span className="text-slate-600 w-24">{key}</span>
                   <input
@@ -281,8 +279,12 @@ export default function StatsAndActivities({
                   <span className="text-slate-400 text-[9px]">pts/hr</span>
                 </label>
               ))}
-              <p className="text-[9px] text-slate-400">Hunger rises over time; other stats fall.</p>
+              <p className="text-[9px] text-slate-400">All three bars decay over time while idle.</p>
             </div>
+
+            <p className="text-[9px] text-indigo-600 font-bold border-t border-slate-200 pt-2">
+              Activity stat bonuses (+/−) are configured in the Pet Customizer Engine → Features tab.
+            </p>
 
             <div className="space-y-2 border-t border-slate-200 pt-2">
               <span className="text-[10px] font-black text-indigo-600 uppercase tracking-wider block">
@@ -406,14 +408,19 @@ export default function StatsAndActivities({
               const customFeat = assets?.customFeatures?.find((f) => f.id === val);
               if (customFeat) {
                 handlePlayCustomFeature(customFeat);
+              } else if (val === 'sleep') {
+                handleStartNap();
+              } else if (val === 'idle') {
+                onReturnToIdle();
               } else {
-                setInteractState(val, val === 'idle' ? 999999 : customDuration * 1000);
+                setInteractState(val, customDuration * 1000);
               }
             }}
             className="w-full bg-white border border-indigo-200 rounded-lg px-2 py-1.5 font-bold text-[11px] text-slate-700 cursor-pointer"
           >
             <option value="idle">🛋️ Idle</option>
             <option value="studying">📚 Studying</option>
+            <option value="sleep">😴 Sleeping</option>
             <option value="focusReward">🏆 Focus Reward</option>
             <option value="eating">🍕 Eating</option>
             <option value="dancing">🎵 Dancing</option>
@@ -432,21 +439,21 @@ export default function StatsAndActivities({
         <div className="grid grid-cols-2 gap-2 text-xs">
           <button
             onClick={handlePetThePet}
-            disabled={currentInteractState !== 'idle' && currentInteractState !== 'laser'}
+            disabled={isBusy}
             className="flex items-center justify-center gap-2 p-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold transition-all disabled:opacity-40 cursor-pointer"
           >
             <Heart className="w-4 h-4 fill-rose-600/20 text-rose-600" /> Pet Cat
           </button>
           <button
             onClick={handleLickFur}
-            disabled={currentInteractState !== 'idle' && currentInteractState !== 'laser'}
+            disabled={isBusy}
             className="flex items-center justify-center gap-2 p-3 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl font-bold transition-all disabled:opacity-40 cursor-pointer"
           >
             <Sparkles className="w-4 h-4 text-sky-600" /> Groom Fur
           </button>
           <button
             onClick={handleDance}
-            disabled={currentInteractState !== 'idle' && currentInteractState !== 'laser'}
+            disabled={isBusy}
             className="flex items-center justify-center gap-2 p-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl font-bold transition-all disabled:opacity-40 cursor-pointer col-span-2"
           >
             <Music className="w-4 h-4 text-indigo-600 animate-bounce" /> Dance Beats
@@ -460,10 +467,7 @@ export default function StatsAndActivities({
             </span>
             <button
               onClick={handleFeed}
-              disabled={
-                (currentInteractState !== 'idle' && currentInteractState !== 'laser') ||
-                (snackInventory[selectedFood] ?? 0) < 1
-              }
+              disabled={isBusy || (snackInventory[selectedFood] ?? 0) < 1}
               className="px-3.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition-all disabled:opacity-40 cursor-pointer shadow-sm text-[11px]"
             >
               Feed Snack
@@ -491,10 +495,71 @@ export default function StatsAndActivities({
           </div>
         </div>
 
+        <div className="p-3 bg-indigo-50/60 border border-indigo-200 rounded-xl space-y-2">
+          <div className="flex justify-between items-start gap-2">
+            <span className="text-[10px] font-black text-indigo-800 uppercase tracking-wider flex items-center gap-1">
+              <Moon className="w-3.5 h-3.5" /> Sleep timer
+            </span>
+            <span className="text-[9px] text-violet-700 font-bold text-right leading-tight">
+              On start: ⚡{activityRewards.sleep.energy >= 0 ? '+' : ''}{activityRewards.sleep.energy} 😊
+              {activityRewards.sleep.happiness >= 0 ? '+' : ''}
+              {activityRewards.sleep.happiness}
+            </span>
+          </div>
+          <p className="text-[9px] text-slate-500">Edit nap bonuses in Customizer Engine → Features.</p>
+          {sleepActive ? (
+            <div className="space-y-2">
+              <p className="text-center text-sm font-black text-indigo-700 font-mono">
+                Zzz… {formatDurationSeconds(sleepRemaining)} left
+              </p>
+              <button
+                type="button"
+                onClick={onWakeUp}
+                className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl transition-all cursor-pointer text-xs"
+              >
+                Wake Up
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-1.5">
+                {[
+                  { label: 'hr', value: sleepHours, setter: setSleepHours, max: 23 },
+                  { label: 'min', value: sleepMinutes, setter: setSleepMinutes, max: 59 },
+                  { label: 'sec', value: sleepSeconds, setter: setSleepSeconds, max: 59 },
+                ].map((field) => (
+                  <label key={field.label} className="text-center">
+                    <input
+                      type="number"
+                      min={0}
+                      max={field.max}
+                      value={field.value}
+                      onChange={(e) =>
+                        field.setter(Math.max(0, Math.min(field.max, parseInt(e.target.value) || 0)))
+                      }
+                      className="w-full text-center bg-white border border-indigo-200 rounded-lg px-1 py-1.5 text-sm font-black text-indigo-700 font-mono"
+                    />
+                    <span className="text-[9px] font-bold text-slate-500 uppercase">{field.label}</span>
+                  </label>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={handleStartNap}
+                disabled={isBusy}
+                className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all disabled:opacity-40 cursor-pointer text-xs"
+              >
+                Start Nap
+              </button>
+            </>
+          )}
+        </div>
+
         <div className="grid grid-cols-2 gap-2 text-xs">
           <button
             onClick={handleToggleLaser}
-            className={`flex items-center justify-center gap-1.5 p-2 rounded-xl border transition-all font-bold cursor-pointer ${
+            disabled={sleepActive}
+            className={`flex items-center justify-center gap-1.5 p-2 rounded-xl border transition-all font-bold cursor-pointer disabled:opacity-40 ${
               laserMode
                 ? 'bg-red-600 text-white border-red-600 shadow-md animate-pulse'
                 : 'bg-red-50 text-red-600 hover:bg-red-100 border-red-200'
@@ -503,13 +568,17 @@ export default function StatsAndActivities({
             <Compass className="w-4 h-4" />
             {laserMode ? 'Laser ON' : 'Laser Chase'}
           </button>
-          <button
-            onClick={handleNap}
-            className="flex items-center justify-center gap-1.5 p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl font-bold transition-all cursor-pointer"
-          >
-            <Moon className="w-4 h-4 text-indigo-500" /> Nap Zzz
-          </button>
         </div>
+
+        {isBusy && (
+          <button
+            type="button"
+            onClick={onReturnToIdle}
+            className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-black rounded-xl transition-all cursor-pointer text-xs uppercase tracking-wider"
+          >
+            Return to Idle
+          </button>
+        )}
       </div>
     </div>
   );

@@ -4,7 +4,23 @@
  */
 
 import React, { useRef, useState } from 'react';
-import { CustomAssets, WidgetCustomizer, UploadedFile, PetStats, FoodItem } from '../types';
+import {
+  CustomAssets,
+  WidgetCustomizer,
+  UploadedFile,
+  PetStats,
+  FoodItem,
+  CompanionSettings,
+  ActivityRewards,
+  ActivityStatBonus,
+  CustomFeature,
+} from '../types';
+import {
+  ACTIVITY_STAT_FIELDS,
+  clampActivityStat,
+  normalizeStatBonus,
+  FOCUS_REFERENCE_MINUTES,
+} from '../utils/companionSettings';
 import { getFoodAssetKey } from '../defaults';
 import { 
   Upload, 
@@ -30,7 +46,17 @@ interface CustomizerPanelProps {
   customDuration?: number;
   setCustomDuration?: (val: number) => void;
   onFoodAdded?: (foodId: string) => void;
+  companionSettings: CompanionSettings;
+  setCompanionSettings: React.Dispatch<React.SetStateAction<CompanionSettings>>;
 }
+
+const BUILTIN_FEATURE_SPECS: { id: keyof ActivityRewards; name: string; emoji: string; hint: string }[] = [
+  { id: 'petting', name: 'Pet Cat', emoji: '❤️', hint: 'Applied each time you pet' },
+  { id: 'licking', name: 'Groom Fur', emoji: '✨', hint: 'Applied each grooming action' },
+  { id: 'dancing', name: 'Dance Beats', emoji: '🎵', hint: 'Applied when dance starts' },
+  { id: 'laser', name: 'Laser Chase', emoji: '🔴', hint: 'Applied when laser mode turns on' },
+  { id: 'sleep', name: 'Sleep / Nap', emoji: '😴', hint: 'Applied once when nap starts' },
+];
 
 export default function CustomizerPanel({
   customizer,
@@ -42,8 +68,10 @@ export default function CustomizerPanel({
   customDuration = 5,
   setCustomDuration,
   onFoodAdded,
+  companionSettings,
+  setCompanionSettings,
 }: CustomizerPanelProps) {
-  const [activeTab, setActiveTab] = useState<'visuals' | 'uploads' | 'foods' | 'windows'>('visuals');
+  const [activeTab, setActiveTab] = useState<'visuals' | 'features' | 'uploads' | 'foods' | 'windows'>('features');
   const [copiedName, setCopiedName] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string>('');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
@@ -60,6 +88,91 @@ export default function CustomizerPanel({
   const [bonusHappiness, setBonusHappiness] = useState(15);
   const [bonusEnergy, setBonusEnergy] = useState(-5);
   const [bonusClean, setBonusClean] = useState(0);
+
+  const { petName, activityRewards, decayPerHour, focusRewardPer25Min } = companionSettings;
+
+  const updatePetName = (name: string) => {
+    setCompanionSettings((prev) => ({
+      ...prev,
+      petName: name.trim().slice(0, 32) || 'Tabby',
+    }));
+  };
+
+  const updateActivityReward = (
+    activityId: keyof ActivityRewards,
+    stat: keyof ActivityStatBonus,
+    value: number
+  ) => {
+    setCompanionSettings((prev) => ({
+      ...prev,
+      activityRewards: {
+        ...prev.activityRewards,
+        [activityId]: {
+          ...prev.activityRewards[activityId],
+          [stat]: clampActivityStat(stat, value),
+        },
+      },
+    }));
+  };
+
+  const updateCustomFeatureStats = (
+    featId: string,
+    stat: keyof ActivityStatBonus,
+    value: number
+  ) => {
+    setAssets((prev) => ({
+      ...prev,
+      customFeatures: (prev.customFeatures || []).map((f) =>
+        f.id === featId
+          ? { ...f, statsBonus: { ...f.statsBonus, [stat]: clampActivityStat(stat, value) } }
+          : f
+      ),
+    }));
+  };
+
+  const updateDecay = (key: keyof typeof decayPerHour, value: number) => {
+    setCompanionSettings((prev) => ({
+      ...prev,
+      decayPerHour: { ...prev.decayPerHour, [key]: Math.max(0, Math.min(50, value)) },
+    }));
+  };
+
+  const updateFocusStat = (key: 'happiness' | 'cleanliness' | 'energy', value: number) => {
+    setCompanionSettings((prev) => ({
+      ...prev,
+      focusRewardPer25Min: {
+        ...prev.focusRewardPer25Min,
+        [key]: Math.max(-100, Math.min(100, value)),
+      },
+    }));
+  };
+
+  const StatBonusInputs = ({
+    bonus,
+    onChange,
+    compact,
+  }: {
+    bonus: ActivityStatBonus;
+    onChange: (stat: keyof ActivityStatBonus, value: number) => void;
+    compact?: boolean;
+  }) => (
+    <div className={`grid ${compact ? 'grid-cols-3' : 'grid-cols-1 sm:grid-cols-3'} gap-2`}>
+      {ACTIVITY_STAT_FIELDS.map(({ key, label, hint, min, max }) => (
+        <label key={key} className="flex flex-col gap-1 text-[10px] font-bold text-slate-600">
+          <span className="uppercase tracking-wide text-slate-500">{label}</span>
+          <input
+            type="number"
+            min={min}
+            max={max}
+            value={bonus[key]}
+            onChange={(e) => onChange(key, parseFloat(e.target.value) || 0)}
+            className="w-full text-center bg-white border border-slate-300 rounded-lg px-2 py-2 font-mono text-sm text-indigo-800 font-black"
+          />
+          <span className="text-[9px] font-normal text-slate-400">{hint}</span>
+        </label>
+      ))}
+    </div>
+  );
 
   const handleFileUpload = async (key: string, event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -146,10 +259,8 @@ export default function CustomizerPanel({
       description: newFeatDesc.trim() || 'Custom Dynamic Interaction',
       statsBonus: {
         happiness: Number(bonusHappiness),
-        hunger: 0,
         energy: Number(bonusEnergy),
         cleanliness: Number(bonusClean),
-        love: 0,
       }
     };
 
@@ -209,7 +320,7 @@ export default function CustomizerPanel({
       name: newFoodName.trim(),
       emoji: newFoodEmoji.trim() || '🍪',
       description: newFoodDescription.trim() || 'Custom snack',
-      statsBonus: { happiness: 5, hunger: 0, energy: 5, cleanliness: 0, love: 0 },
+      statsBonus: { happiness: 5, energy: 5, cleanliness: 0 },
     };
 
     setAssets((prev) => ({
@@ -248,11 +359,11 @@ export default function CustomizerPanel({
   const updateFoodStats = (foodId: string, stat: keyof FoodItem['statsBonus'], value: number) => {
     setAssets((prev) => ({
       ...prev,
-      foods: (prev.foods || []).map((food) => (
+      foods: (prev.foods || []).map((food) =>
         food.id === foodId
-          ? { ...food, statsBonus: { ...food.statsBonus, [stat]: value } }
+          ? { ...food, statsBonus: { ...food.statsBonus, [stat]: clampActivityStat(stat, value) } }
           : food
-      )),
+      ),
     }));
   };
 
@@ -354,6 +465,7 @@ export default function CustomizerPanel({
   const uploadInputsSpec = [
     { key: 'idle', label: 'Idle / resting pose' },
     { key: 'studying', label: 'During Focus / study pose' },
+    { key: 'sleep', label: 'Sleep / nap pose' },
     { key: 'shortBreak', label: 'Focus Short Break pose' },
     { key: 'rest', label: 'Focus REST/Long Break pose' },
     { key: 'focusReward', label: 'Finish Focus reward celebrate' },
@@ -378,14 +490,25 @@ export default function CustomizerPanel({
   const allSpecs = [...uploadInputsSpec, ...foodSpecs, ...dynamicSpecs];
 
   return (
-    <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl overflow-hidden text-slate-800 flex flex-col h-full transition-all duration-300">
+    <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl overflow-hidden text-slate-800 flex flex-col min-h-[min(72vh,880px)] transition-all duration-300">
       {/* Settings Header */}
-      <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+      <div className="p-4 md:p-5 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <Settings className="w-5 h-5 text-indigo-500 animate-spin-slow" />
-          <h2 className="font-semibold text-slate-800 text-sm tracking-wide uppercase">Pet Customizer Engine</h2>
+          <Settings className="w-6 h-6 text-indigo-500 animate-spin-slow" />
+          <div>
+            <h2 className="font-black text-slate-900 text-base tracking-tight">Pet Customizer Engine</h2>
+            <p className="text-[11px] text-slate-500 font-medium">Themes · media · foods · stat bonuses per feature</p>
+          </div>
         </div>
-        <div className="flex gap-1 text-xs bg-slate-200/60 p-1 rounded-lg">
+        <div className="flex flex-wrap gap-1 text-xs bg-slate-200/60 p-1.5 rounded-xl">
+          <button
+            onClick={() => setActiveTab('features')}
+            className={`px-3 py-1.5 rounded-lg transition-all font-bold ${
+              activeTab === 'features' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Features
+          </button>
           <button
             onClick={() => setActiveTab('visuals')}
             className={`px-3 py-1 rounded-md transition-all font-medium ${
@@ -421,7 +544,129 @@ export default function CustomizerPanel({
         </div>
       </div>
 
-      <div className="p-5 flex-1 overflow-y-auto space-y-5 text-sm">
+      <div className="p-5 md:p-6 flex-1 overflow-y-auto space-y-6 text-sm min-h-[60vh]">
+        {activeTab === 'features' && (
+          <div className="space-y-6 animate-fade-in">
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
+              <label className="text-xs font-black text-amber-900 uppercase tracking-wider block">
+                Pet name (backdoor)
+              </label>
+              <input
+                type="text"
+                maxLength={32}
+                value={petName}
+                onChange={(e) => updatePetName(e.target.value)}
+                placeholder="e.g. Mochi, Luna, Mr. Whiskers"
+                className="w-full bg-white border border-amber-300 rounded-xl px-4 py-3 text-base font-bold text-slate-800"
+              />
+              <p className="text-[10px] text-amber-800/80">
+                Shown on the status card, hover HUD, and idle bubble. Saved automatically.
+              </p>
+            </div>
+
+            <p className="text-xs text-slate-600 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 leading-relaxed">
+              Each action changes the three bars only: Happiness, Energy, and Cleanliness. Use negative numbers to
+              lower a bar (e.g. dance costing energy).
+            </p>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              {BUILTIN_FEATURE_SPECS.map((spec) => (
+                <div
+                  key={spec.id}
+                  className="bg-gradient-to-br from-white to-slate-50 border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3"
+                >
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+                    <span className="text-2xl">{spec.emoji}</span>
+                    <div>
+                      <h3 className="font-black text-slate-900 text-sm">{spec.name}</h3>
+                      <p className="text-[10px] text-slate-500">{spec.hint}</p>
+                    </div>
+                  </div>
+                  <StatBonusInputs
+                    bonus={activityRewards[spec.id]}
+                    onChange={(stat, val) => updateActivityReward(spec.id, stat, val)}
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t border-slate-200 pt-5 space-y-4">
+              <h3 className="font-black text-slate-800 text-sm uppercase tracking-wider flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-500" /> Custom features
+              </h3>
+              {(assets.customFeatures || []).length === 0 ? (
+                <p className="text-xs text-slate-500 italic">No custom features yet — add one under Custom Assets.</p>
+              ) : (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  {(assets.customFeatures || []).map((feat: CustomFeature) => (
+                    <div key={feat.id} className="bg-violet-50/50 border border-violet-200 rounded-2xl p-4 space-y-3">
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <h4 className="font-black text-violet-950 text-sm">{feat.name}</h4>
+                          <p className="text-[10px] text-violet-700/80">{feat.description}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCustomFeature(feat.id)}
+                          className="p-1.5 text-rose-600 hover:bg-rose-100 rounded-lg cursor-pointer"
+                          title="Delete feature"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <StatBonusInputs
+                        bonus={normalizeStatBonus(feat.statsBonus)}
+                        onChange={(stat, val) => updateCustomFeatureStats(feat.id, stat, val)}
+                        compact
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 border-t border-slate-200 pt-5">
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <h3 className="font-black text-slate-700 text-xs uppercase tracking-wider">
+                  Focus timer reward / {FOCUS_REFERENCE_MINUTES}m
+                </h3>
+                <p className="text-[10px] text-slate-500">Scales with session length. Supports +/−.</p>
+                {(['happiness', 'energy', 'cleanliness'] as const).map((key) => (
+                  <label key={key} className="flex items-center justify-between gap-2 text-xs font-bold capitalize">
+                    <span>{key}</span>
+                    <input
+                      type="number"
+                      min={-100}
+                      max={100}
+                      value={focusRewardPer25Min[key]}
+                      onChange={(e) => updateFocusStat(key, parseInt(e.target.value) || 0)}
+                      className="w-20 text-center bg-white border border-slate-300 rounded-lg py-1.5 font-mono text-indigo-700"
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <h3 className="font-black text-slate-700 text-xs uppercase tracking-wider">Hourly decay</h3>
+                <p className="text-[10px] text-slate-500">Points lost per hour from each bar.</p>
+                {(['happiness', 'energy', 'cleanliness'] as const).map((key) => (
+                  <label key={key} className="flex items-center justify-between gap-2 text-xs font-bold capitalize">
+                    <span>{key}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={50}
+                      step={0.5}
+                      value={decayPerHour[key]}
+                      onChange={(e) => updateDecay(key, parseFloat(e.target.value) || 0)}
+                      className="w-20 text-center bg-white border border-slate-300 rounded-lg py-1.5 font-mono text-indigo-700"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'visuals' && (
           <div className="space-y-5 animate-fade-in">
             {/* Theme Selector */}
@@ -688,25 +933,25 @@ export default function CustomizerPanel({
                       </div>
                     </div>
 
-                    <div className="bg-white/80 border border-slate-100 rounded p-2">
-                      <span className="text-[9px] font-extrabold text-indigo-600 uppercase block mb-1">XP / Pet Stat Adjustments When Activated:</span>
-                      <div className="grid grid-cols-3 gap-1.5 text-center text-[10px]">
+                    <div className="bg-white/80 border border-slate-100 rounded-lg p-2">
+                      <span className="text-[9px] font-extrabold text-indigo-600 uppercase block mb-2">
+                        Stat adjustments when activated (+/−):
+                      </span>
+                      <div className="grid grid-cols-3 gap-1 text-[10px]">
                         {[
-                          { label: '😊 Happy', val: bonusHappiness, set: setBonusHappiness, min: -50, max: 100 },
-                          { label: '⚡ Energy', val: bonusEnergy, set: setBonusEnergy, min: -50, max: 100 },
-                          { label: '✨ Clean', val: bonusClean, set: setBonusClean, min: -50, max: 100 },
+                          { label: 'Happy', val: bonusHappiness, set: setBonusHappiness },
+                          { label: 'Energy', val: bonusEnergy, set: setBonusEnergy },
+                          { label: 'Clean', val: bonusClean, set: setBonusClean },
                         ].map((item) => (
-                          <div key={item.label} className="space-y-0.5">
-                            <span className="text-[9px] block text-slate-500 font-medium">{item.label}</span>
+                          <label key={item.label} className="space-y-0.5 font-bold text-slate-600">
+                            <span className="text-[8px] uppercase">{item.label}</span>
                             <input
                               type="number"
-                              min={item.min}
-                              max={item.max}
                               value={item.val}
                               onChange={(e) => item.set(Number(e.target.value))}
-                              className="w-full bg-white border border-slate-250 rounded p-0.5 text-center font-bold text-xs max-w-[45px]"
+                              className="w-full bg-white border border-slate-200 rounded p-1 text-center font-mono text-xs"
                             />
-                          </div>
+                          </label>
                         ))}
                       </div>
                     </div>
@@ -957,22 +1202,13 @@ export default function CustomizerPanel({
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-1.5 text-center text-[10px]">
-                      {[
-                        ['happiness', 'Happy'],
-                        ['energy', 'Energy'],
-                        ['cleanliness', 'Clean'],
-                      ].map(([stat, label]) => (
-                        <label key={stat} className="space-y-0.5 text-slate-500 font-bold">
-                          <span>{label}</span>
-                          <input
-                            type="number"
-                            value={food.statsBonus[stat as keyof FoodItem['statsBonus']]}
-                            onChange={(e) => updateFoodStats(food.id, stat as keyof FoodItem['statsBonus'], Number(e.target.value))}
-                            className="w-full bg-white border border-slate-200 rounded p-0.5 text-center font-bold text-xs"
-                          />
-                        </label>
-                      ))}
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-black text-amber-800 uppercase">Feed stat deltas (+/−)</span>
+                      <StatBonusInputs
+                        bonus={normalizeStatBonus(food.statsBonus)}
+                        onChange={(stat, val) => updateFoodStats(food.id, stat, val)}
+                        compact
+                      />
                     </div>
 
                     <div className="flex flex-wrap gap-1.5 text-[9px]">

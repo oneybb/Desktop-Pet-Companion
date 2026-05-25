@@ -1,12 +1,12 @@
-import { FoodItem, PetStats, CompanionSettings } from '../types';
-import { DEFAULT_FOODS } from '../defaults';
+import { FoodItem, PetStats, CompanionSettings, ActivityStatBonus, ActivityRewards } from '../types';
+import { DEFAULT_FOODS, DEFAULT_PET_NAME } from '../defaults';
 
 export const FOCUS_REFERENCE_MINUTES = 25;
 
 export const DEFAULT_COMPANION_SETTINGS: CompanionSettings = {
+  petName: DEFAULT_PET_NAME,
   decayPerHour: {
     happiness: 5,
-    hunger: 5,
     energy: 5,
     cleanliness: 5,
   },
@@ -16,24 +16,82 @@ export const DEFAULT_COMPANION_SETTINGS: CompanionSettings = {
     energy: 10,
     snacks: [],
   },
+  activityRewards: {
+    petting: { happiness: 15, energy: 0, cleanliness: 0 },
+    licking: { happiness: 0, energy: 0, cleanliness: 25 },
+    dancing: { happiness: 25, energy: -15, cleanliness: 0 },
+    laser: { happiness: 5, energy: -5, cleanliness: 0 },
+    sleep: { happiness: 0, energy: 45, cleanliness: 0 },
+  },
   snackInventory: Object.fromEntries(DEFAULT_FOODS.map((f) => [f.id, 1])),
   initialSnackCounts: Object.fromEntries(DEFAULT_FOODS.map((f) => [f.id, 1])),
 };
+
+export const ACTIVITY_STAT_FIELDS: {
+  key: keyof ActivityStatBonus;
+  label: string;
+  hint: string;
+  min: number;
+  max: number;
+}[] = [
+  { key: 'happiness', label: 'Happiness', hint: '0–100 bar', min: -100, max: 100 },
+  { key: 'energy', label: 'Energy', hint: '0–100 bar', min: -100, max: 100 },
+  { key: 'cleanliness', label: 'Cleanliness', hint: '0–100 bar', min: -100, max: 100 },
+];
+
+export function normalizeStatBonus(raw?: Partial<ActivityStatBonus> | null): ActivityStatBonus {
+  return {
+    happiness: raw?.happiness ?? 0,
+    energy: raw?.energy ?? 0,
+    cleanliness: raw?.cleanliness ?? 0,
+  };
+}
+
+function mergeActivityRewards(
+  parsed?: Partial<ActivityRewards>,
+  legacySleep?: Partial<ActivityStatBonus> | null
+): ActivityRewards {
+  const base = DEFAULT_COMPANION_SETTINGS.activityRewards;
+  const keys = Object.keys(base) as (keyof ActivityRewards)[];
+  const merged = { ...base };
+  for (const key of keys) {
+    const raw = {
+      ...parsed?.[key],
+      ...(key === 'sleep' ? legacySleep : undefined),
+    };
+    merged[key] = normalizeStatBonus(raw);
+  }
+  return merged;
+}
 
 export function loadCompanionSettings(): CompanionSettings {
   const saved = localStorage.getItem('desktop_pet_companion_settings');
   if (saved) {
     try {
-      const parsed = JSON.parse(saved) as Partial<CompanionSettings>;
+      const parsed = JSON.parse(saved) as Partial<CompanionSettings> & {
+        sleepReward?: Partial<ActivityStatBonus>;
+      };
+      const legacyDecay = parsed.decayPerHour as Partial<CompanionSettings['decayPerHour']> & {
+        hunger?: number;
+      } | undefined;
       return {
         ...DEFAULT_COMPANION_SETTINGS,
         ...parsed,
-        decayPerHour: { ...DEFAULT_COMPANION_SETTINGS.decayPerHour, ...parsed.decayPerHour },
+        petName:
+          typeof parsed.petName === 'string' && parsed.petName.trim()
+            ? parsed.petName.trim().slice(0, 32)
+            : DEFAULT_PET_NAME,
+        decayPerHour: {
+          happiness: legacyDecay?.happiness ?? DEFAULT_COMPANION_SETTINGS.decayPerHour.happiness,
+          energy: legacyDecay?.energy ?? DEFAULT_COMPANION_SETTINGS.decayPerHour.energy,
+          cleanliness: legacyDecay?.cleanliness ?? DEFAULT_COMPANION_SETTINGS.decayPerHour.cleanliness,
+        },
         focusRewardPer25Min: {
           ...DEFAULT_COMPANION_SETTINGS.focusRewardPer25Min,
           ...parsed.focusRewardPer25Min,
           snacks: parsed.focusRewardPer25Min?.snacks ?? DEFAULT_COMPANION_SETTINGS.focusRewardPer25Min.snacks,
         },
+        activityRewards: mergeActivityRewards(parsed.activityRewards, parsed.sleepReward),
         snackInventory: { ...DEFAULT_COMPANION_SETTINGS.snackInventory, ...parsed.snackInventory },
         initialSnackCounts: {
           ...DEFAULT_COMPANION_SETTINGS.initialSnackCounts,
@@ -128,6 +186,39 @@ export function applyFocusSessionRewards(
   };
 }
 
+export function clampActivityStat(key: keyof ActivityStatBonus, value: number): number {
+  const field = ACTIVITY_STAT_FIELDS.find((f) => f.key === key);
+  if (!field) return value;
+  return Math.max(field.min, Math.min(field.max, value));
+}
+
+export function applyActivityStatBonus(
+  bonus: ActivityStatBonus,
+  setStats: (fn: (prev: PetStats) => PetStats) => void
+): void {
+  const b = normalizeStatBonus(bonus);
+  setStats((prev) => ({
+    ...prev,
+    happiness: Math.min(100, Math.max(0, prev.happiness + b.happiness)),
+    energy: Math.min(100, Math.max(0, prev.energy + b.energy)),
+    cleanliness: Math.min(100, Math.max(0, prev.cleanliness + b.cleanliness)),
+  }));
+}
+
 export function formatStatScore(value: number): string {
   return `${Math.round(Math.max(0, Math.min(100, value)))}`;
+}
+
+export function formatDurationSeconds(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+export function durationToSeconds(hours: number, minutes: number, seconds: number): number {
+  return Math.max(1, Math.min(24 * 3600, hours * 3600 + minutes * 60 + seconds));
 }

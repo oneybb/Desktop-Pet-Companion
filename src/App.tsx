@@ -14,6 +14,7 @@ import {
   loadCompanionSettings,
   syncSnackInventory,
   applyFocusSessionRewards,
+  applyActivityStatBonus,
   FOCUS_REFERENCE_MINUTES,
 } from './utils/companionSettings';
 import { motion, AnimatePresence } from 'motion/react';
@@ -38,17 +39,22 @@ export default function App() {
     const saved = localStorage.getItem('desktop_pet_stats_data');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        return {
+          happiness: parsed.happiness ?? 85,
+          energy: parsed.energy ?? 90,
+          cleanliness: parsed.cleanliness ?? 95,
+          focusMinutes: parsed.focusMinutes ?? 0,
+          completedSessions: parsed.completedSessions ?? 0,
+        };
       } catch (e) {
         console.warn('Failed to parse pet level dataset, resetting...');
       }
     }
     return {
       happiness: 85,
-      hunger: 10,
       energy: 90,
       cleanliness: 95,
-      love: 45, // starts with some love
       focusMinutes: 0,
       completedSessions: 0,
     };
@@ -73,21 +79,24 @@ export default function App() {
           if (!parsed.activeIndices) parsed.activeIndices = {};
           if (!parsed.playModes) {
             parsed.playModes = {};
-            const keys = ['idle', 'studying', 'shortBreak', 'rest', 'focusReward', 'eating', 'dancing', 'petting', 'licking', 'laser'];
+            const keys = ['idle', 'studying', 'sleep', 'shortBreak', 'rest', 'focusReward', 'eating', 'dancing', 'petting', 'licking', 'laser'];
             keys.forEach(k => {
               parsed.playModes[k] = parsed.playMode || 'cycle';
             });
           }
           if (!parsed.uploadedAssets.shortBreak) parsed.uploadedAssets.shortBreak = [];
           if (!parsed.uploadedAssets.rest) parsed.uploadedAssets.rest = [];
+          if (!parsed.uploadedAssets.sleep) parsed.uploadedAssets.sleep = [];
           if (!parsed.uploadedAssets.laser) parsed.uploadedAssets.laser = [];
           
           if (parsed.activeIndices.shortBreak === undefined) parsed.activeIndices.shortBreak = 0;
           if (parsed.activeIndices.rest === undefined) parsed.activeIndices.rest = 0;
+          if (parsed.activeIndices.sleep === undefined) parsed.activeIndices.sleep = 0;
           if (parsed.activeIndices.laser === undefined) parsed.activeIndices.laser = 0;
 
           if (!parsed.playModes.shortBreak) parsed.playModes.shortBreak = 'cycle';
           if (!parsed.playModes.rest) parsed.playModes.rest = 'cycle';
+          if (!parsed.playModes.sleep) parsed.playModes.sleep = 'cycle';
           if (!parsed.playModes.laser) parsed.playModes.laser = 'cycle';
 
           if (!parsed.customFeatures) parsed.customFeatures = [];
@@ -144,6 +153,7 @@ export default function App() {
       uploadedAssets: {
         idle: [],
         studying: [],
+        sleep: [],
         shortBreak: [],
         rest: [],
         focusReward: [],
@@ -157,6 +167,7 @@ export default function App() {
       activeIndices: {
         idle: 0,
         studying: 0,
+        sleep: 0,
         shortBreak: 0,
         rest: 0,
         focusReward: 0,
@@ -170,6 +181,7 @@ export default function App() {
       playModes: {
         idle: 'cycle',
         studying: 'cycle',
+        sleep: 'cycle',
         shortBreak: 'cycle',
         rest: 'cycle',
         focusReward: 'cycle',
@@ -250,7 +262,11 @@ export default function App() {
   const [showConfig, setShowConfig] = useState(true);
   const [compactWidgetMode, setCompactWidgetMode] = useState(isDesktopWidget);
   const [isWidgetHovered, setIsWidgetHovered] = useState(false);
-  const resetTimeoutRef = useRef<any>(null);
+  const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sleepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [sleepActive, setSleepActive] = useState(false);
+  const [sleepRemaining, setSleepRemaining] = useState(0);
+  const [idleResetKey, setIdleResetKey] = useState(0);
   const [showFocusRewardModal, setShowFocusRewardModal] = useState(false);
   const [lastFocusRewards, setLastFocusRewards] = useState<{
     statGains: { happiness: number; cleanliness: number; energy: number };
@@ -351,7 +367,6 @@ export default function App() {
       setStats((prev) => ({
         ...prev,
         happiness: Math.max(0, prev.happiness - rates.happiness * hours),
-        hunger: Math.min(100, prev.hunger + rates.hunger * hours),
         energy: Math.max(0, prev.energy - rates.energy * hours),
         cleanliness: Math.max(0, prev.cleanliness - rates.cleanliness * hours),
       }));
@@ -378,7 +393,6 @@ export default function App() {
     return () => clearInterval(tickInterval);
   }, [
     companionSettings.decayPerHour.happiness,
-    companionSettings.decayPerHour.hunger,
     companionSettings.decayPerHour.energy,
     companionSettings.decayPerHour.cleanliness,
   ]);
@@ -393,8 +407,75 @@ export default function App() {
     }));
   };
 
+  const clearSleepTimer = () => {
+    if (sleepTimerRef.current) {
+      clearInterval(sleepTimerRef.current);
+      sleepTimerRef.current = null;
+    }
+  };
+
+  const wakeUp = () => {
+    clearSleepTimer();
+    setSleepActive(false);
+    setSleepRemaining(0);
+    if (resetTimeoutRef.current) {
+      clearTimeout(resetTimeoutRef.current);
+      resetTimeoutRef.current = null;
+    }
+    setInteractState('idle');
+  };
+
+  const startSleep = (totalSeconds: number) => {
+    const secs = Math.max(1, Math.min(24 * 3600, totalSeconds));
+    clearSleepTimer();
+    if (resetTimeoutRef.current) {
+      clearTimeout(resetTimeoutRef.current);
+      resetTimeoutRef.current = null;
+    }
+    setLaserMode(false);
+    applyActivityStatBonus(companionSettings.activityRewards.sleep, setStats);
+    setSleepActive(true);
+    setSleepRemaining(secs);
+    setInteractState('sleep');
+  };
+
+  const handleReturnToIdle = () => {
+    wakeUp();
+    setLaserMode(false);
+    if (resetTimeoutRef.current) {
+      clearTimeout(resetTimeoutRef.current);
+      resetTimeoutRef.current = null;
+    }
+    setInteractState('idle');
+    setIdleResetKey((k) => k + 1);
+  };
+
+  useEffect(() => {
+    if (!sleepActive || sleepRemaining <= 0) {
+      clearSleepTimer();
+      return;
+    }
+
+    sleepTimerRef.current = setInterval(() => {
+      setSleepRemaining((prev) => {
+        if (prev <= 1) {
+          clearSleepTimer();
+          setSleepActive(false);
+          setInteractState('idle');
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearSleepTimer();
+  }, [sleepActive, sleepRemaining]);
+
   // Set transient pet states with helper reset timers
   const triggerInteractState = (state: PetState, durationMs: number = 3000) => {
+    if (sleepActive && state !== 'sleep') {
+      wakeUp();
+    }
     // Choose active asset index depending on the target button's specific playMode
     const list = assets.uploadedAssets[state] || [];
     const mode = assets.playModes[state] || 'cycle';
@@ -433,6 +514,9 @@ export default function App() {
     }
 
     setInteractState(state);
+    if (state === 'sleep') {
+      return;
+    }
     if (state !== 'idle' && state !== 'laser') {
       resetTimeoutRef.current = setTimeout(() => {
         setInteractState(laserMode ? 'laser' : 'idle');
@@ -444,8 +528,7 @@ export default function App() {
   const handleLoveIncrease = (amount: number) => {
     setStats((prev) => ({
       ...prev,
-      love: prev.love + amount,
-      happiness: Math.min(100, prev.happiness + Math.ceil(amount / 2)),
+      happiness: Math.min(100, prev.happiness + amount),
     }));
   };
 
@@ -464,10 +547,8 @@ export default function App() {
   const handleResetStats = () => {
     setStats({
       happiness: 85,
-      hunger: 10,
       energy: 90,
       cleanliness: 95,
-      love: 45,
       focusMinutes: 0,
       completedSessions: 0,
     });
@@ -565,6 +646,14 @@ export default function App() {
             customDuration={customDuration}
             setCustomDuration={setCustomDuration}
             onFocusComplete={handleFocusCompleted}
+            sleepActive={sleepActive}
+            sleepRemaining={sleepRemaining}
+            onStartSleep={startSleep}
+            onWakeUp={wakeUp}
+            onReturnToIdle={handleReturnToIdle}
+            idleResetKey={idleResetKey}
+            activityRewards={companionSettings.activityRewards}
+            petName={companionSettings.petName}
             snackInventory={companionSettings.snackInventory}
             onConsumeSnack={(foodId) => {
               const count = companionSettings.snackInventory[foodId] ?? 0;
@@ -588,10 +677,10 @@ export default function App() {
         </div>
       ) : (
         /* Multi-Pane Full Companion Workspace */
-        <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start h-full self-center">
+        <main className="flex-1 max-w-[1600px] w-full mx-auto p-4 md:p-6 flex flex-col gap-6 items-stretch h-full self-center">
           <>
-            {/* Visualizer and Customizer controls */}
-            <div className="lg:col-span-6 space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="lg:col-span-5 space-y-4">
               <div className="bg-white/95 border border-slate-200 rounded-3xl p-4 shadow-sm">
                 <div className="flex justify-between items-center mb-1">
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest block">Virtual Companion view</h3>
@@ -614,6 +703,14 @@ export default function App() {
                   customDuration={customDuration}
                   setCustomDuration={setCustomDuration}
                   onFocusComplete={handleFocusCompleted}
+                  sleepActive={sleepActive}
+                  sleepRemaining={sleepRemaining}
+                  onStartSleep={startSleep}
+                  onWakeUp={wakeUp}
+                  onReturnToIdle={handleReturnToIdle}
+                  idleResetKey={idleResetKey}
+                  activityRewards={companionSettings.activityRewards}
+                  petName={companionSettings.petName}
                   snackInventory={companionSettings.snackInventory}
                   onConsumeSnack={(foodId) => {
                     const count = companionSettings.snackInventory[foodId] ?? 0;
@@ -627,17 +724,45 @@ export default function App() {
                 />
               </div>
 
-              {/* Toggle configuration panel drawer */}
-              <div className="flex justify-between items-center bg-white border border-slate-200 rounded-2xl p-3 px-4 shadow-sm">
+            </div>
+
+            {/* Stats list and Interactive play controllers */}
+            <div className="lg:col-span-7 h-full min-h-[420px]">
+              <StatsAndActivities
+                stats={stats}
+                setStats={setStats}
+                currentInteractState={interactState}
+                setInteractState={triggerInteractState}
+                laserMode={laserMode}
+                setLaserMode={setLaserMode}
+                assets={assets}
+                customDuration={customDuration}
+                setCustomDuration={setCustomDuration}
+                companionSettings={companionSettings}
+                setCompanionSettings={setCompanionSettings}
+                sleepActive={sleepActive}
+                sleepRemaining={sleepRemaining}
+                onStartSleep={startSleep}
+                onWakeUp={wakeUp}
+                onReturnToIdle={handleReturnToIdle}
+              />
+            </div>
+            </div>
+
+            {/* Pet Customizer Engine — full width, expanded */}
+            <div className="w-full flex flex-col gap-3">
+              <div className="flex justify-between items-center bg-white border border-slate-200 rounded-2xl p-4 px-5 shadow-sm">
                 <div>
-                  <h4 className="font-bold text-slate-800 text-xs text-left">Custom Assets Configurer</h4>
-                  <p className="text-[10px] text-slate-500">Inject custom pictures & videos</p>
+                  <h4 className="font-black text-slate-900 text-sm tracking-tight">Pet Customizer Engine</h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Themes, assets, foods, and per-feature stat bonuses (+/−)
+                  </p>
                 </div>
                 <button
                   onClick={() => setShowConfig(!showConfig)}
-                  className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all cursor-pointer"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
                 >
-                  {showConfig ? 'Hide Settings 🔒' : 'Show Settings 🛠️'}
+                  {showConfig ? 'Collapse Engine ▲' : 'Expand Engine ▼'}
                 </button>
               </div>
 
@@ -652,25 +777,10 @@ export default function App() {
                   customDuration={customDuration}
                   setCustomDuration={setCustomDuration}
                   onFoodAdded={handleFoodAdded}
+                  companionSettings={companionSettings}
+                  setCompanionSettings={setCompanionSettings}
                 />
               )}
-            </div>
-
-            {/* Stats list and Interactive play controllers */}
-            <div className="lg:col-span-6 h-full">
-              <StatsAndActivities
-                stats={stats}
-                setStats={setStats}
-                currentInteractState={interactState}
-                setInteractState={triggerInteractState}
-                laserMode={laserMode}
-                setLaserMode={setLaserMode}
-                assets={assets}
-                customDuration={customDuration}
-                setCustomDuration={setCustomDuration}
-                companionSettings={companionSettings}
-                setCompanionSettings={setCompanionSettings}
-              />
             </div>
           </>
         </main>

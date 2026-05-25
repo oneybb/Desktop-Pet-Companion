@@ -3,14 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type PetState = 'idle' | 'studying' | 'focusReward' | 'petting' | 'licking' | 'eating' | 'dancing' | 'laser' | string;
+export type PetState = 'idle' | 'studying' | 'sleep' | 'focusReward' | 'petting' | 'licking' | 'eating' | 'dancing' | 'laser' | string;
 
 export interface PetStats {
   happiness: number; // 0 - 100
-  hunger: number; // 0 - 100 (0 means full, 100 means starving)
   energy: number; // 0 - 100
   cleanliness: number; // 0 - 100
-  love: number; // 0 - 1000 (total affection)
   focusMinutes: number; // total accumulated focus minutes
   completedSessions: number; // Pomodoro count
 }
@@ -30,17 +28,18 @@ export interface UploadedFile {
   name: string;
 }
 
+/** Per-use stat deltas for an activity (+ or −), mapped to the three bars */
+export interface ActivityStatBonus {
+  happiness: number;
+  energy: number;
+  cleanliness: number;
+}
+
 export interface CustomFeature {
   id: string; // e.g., 'backflip'
   name: string; // e.g. 'Backflip'
   description: string;
-  statsBonus: {
-    happiness: number;
-    hunger: number;
-    energy: number;
-    cleanliness: number;
-    love: number;
-  };
+  statsBonus: ActivityStatBonus;
 }
 
 export interface FoodItem {
@@ -48,13 +47,7 @@ export interface FoodItem {
   name: string;
   emoji: string;
   description: string;
-  statsBonus: {
-    happiness: number;
-    hunger: number;
-    energy: number;
-    cleanliness: number;
-    love: number;
-  };
+  statsBonus: ActivityStatBonus;
 }
 
 export interface CustomAssets {
@@ -90,7 +83,6 @@ export interface WidgetCustomizer {
 
 export interface StatDecayRates {
   happiness: number;
-  hunger: number;
   energy: number;
   cleanliness: number;
 }
@@ -107,9 +99,19 @@ export interface FocusRewardRates {
   snacks: FocusSnackReward[];
 }
 
+export interface ActivityRewards {
+  petting: ActivityStatBonus;
+  licking: ActivityStatBonus;
+  dancing: ActivityStatBonus;
+  laser: ActivityStatBonus;
+  sleep: ActivityStatBonus;
+}
+
 export interface CompanionSettings {
+  petName: string;
   decayPerHour: StatDecayRates;
   focusRewardPer25Min: FocusRewardRates;
+  activityRewards: ActivityRewards;
   snackInventory: Record<string, number>;
   initialSnackCounts: Record<string, number>;
 }

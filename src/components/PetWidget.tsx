@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { PetState, CustomAssets, WidgetCustomizer, PetStats } from '../types';
+import { PetState, CustomAssets, WidgetCustomizer, PetStats, ActivityRewards } from '../types';
 import { DEFAULT_FOODS, getFoodAssetKey } from '../defaults';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -30,7 +30,7 @@ import petDanceImg from '../assets/images/cat_tabby_dance_1779630251008.png';
 import petEatImg from '../assets/images/cat_tabby_eat_1779630231804.png';
 import TransparentCatImage from './TransparentCatImage';
 import { isDisplayableMediaUrl } from '../utils/mediaUrl';
-import { formatStatScore } from '../utils/companionSettings';
+import { formatStatScore, formatDurationSeconds, durationToSeconds, applyActivityStatBonus } from '../utils/companionSettings';
 
 interface PetWidgetProps {
   currentInteractState: PetState;
@@ -47,6 +47,14 @@ interface PetWidgetProps {
   customDuration?: number;
   setCustomDuration?: (val: number) => void;
   onFocusComplete?: (minutes: number) => void;
+  sleepActive?: boolean;
+  sleepRemaining?: number;
+  onStartSleep?: (totalSeconds: number) => void;
+  onWakeUp?: () => void;
+  onReturnToIdle?: () => void;
+  idleResetKey?: number;
+  activityRewards?: ActivityRewards;
+  petName?: string;
   snackInventory?: Record<string, number>;
   onConsumeSnack?: (foodId: string) => boolean;
 }
@@ -66,6 +74,14 @@ export default function PetWidget({
   customDuration = 5,
   setCustomDuration,
   onFocusComplete,
+  sleepActive = false,
+  sleepRemaining = 0,
+  onStartSleep,
+  onWakeUp,
+  onReturnToIdle,
+  idleResetKey = 0,
+  activityRewards,
+  petName = 'Tabby',
   snackInventory = {},
   onConsumeSnack,
 }: PetWidgetProps) {
@@ -78,6 +94,10 @@ export default function PetWidget({
   const [customMediaError, setCustomMediaError] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [showFocusSetup, setShowFocusSetup] = useState(false);
+  const [showSleepSetup, setShowSleepSetup] = useState(false);
+  const [sleepHours, setSleepHours] = useState(0);
+  const [sleepMinutes, setSleepMinutes] = useState(30);
+  const [sleepSeconds, setSleepSeconds] = useState(0);
   const [focusHours, setFocusHours] = useState(0);
   const [focusMinutes, setFocusMinutes] = useState(25);
   const [focusSeconds, setFocusSeconds] = useState(0);
@@ -191,7 +211,9 @@ export default function PetWidget({
       if (currentInteractState === 'shortBreak') {
         return { type: 'image', url: assets.workspacePaths.shortBreak || petDanceImg, fromUpload: false };
       }
-      if (currentInteractState === 'rest') {
+      if (currentInteractState === 'sleep' || currentInteractState === 'rest') {
+        const sleepUploaded = resolveUploaded('sleep');
+        if (sleepUploaded && currentInteractState === 'sleep') return sleepUploaded;
         return { type: 'image', url: assets.workspacePaths.rest || petIdleImg, fromUpload: false };
       }
       if (currentInteractState === 'focusReward') {
@@ -214,6 +236,13 @@ export default function PetWidget({
     }
 
     // Default static image fallback files if direct array is empty
+    if (currentInteractState === 'sleep') {
+      const sleepUploaded = resolveUploaded('sleep');
+      if (sleepUploaded) return sleepUploaded;
+      const restUploaded = resolveUploaded('rest');
+      if (restUploaded) return restUploaded;
+      return { type: 'image', url: petIdleImg, fromUpload: false };
+    }
     if (currentInteractState === 'studying') return { type: 'image', url: petStudyImg, fromUpload: false };
     if (currentInteractState === 'focusReward') return { type: 'image', url: petStudyImg, fromUpload: false };
     if (currentInteractState === 'eating') return { type: 'image', url: petEatImg, fromUpload: false };
@@ -442,10 +471,12 @@ export default function PetWidget({
     setFocusHours(Math.floor(totalSeconds / 3600));
     setFocusMinutes(Math.floor((totalSeconds % 3600) / 60));
     setFocusSeconds(totalSeconds % 60);
+    onWakeUp?.();
     setFocusRemaining(totalSeconds);
     setFocusActive(true);
     setShowFocusSetup(false);
     setShowOptionsPopup(false);
+    setShowSleepSetup(false);
     setLaserMode(false);
     setInteractState('studying');
   };
@@ -453,8 +484,38 @@ export default function PetWidget({
   const stopFocusTimer = () => {
     setFocusActive(false);
     setFocusRemaining(0);
-    setInteractState('idle');
+    if (!sleepActive) {
+      setInteractState('idle');
+    }
   };
+
+  const startSleepTimer = () => {
+    const totalSeconds = durationToSeconds(sleepHours, sleepMinutes, sleepSeconds);
+    setSleepHours(Math.floor(totalSeconds / 3600));
+    setSleepMinutes(Math.floor((totalSeconds % 3600) / 60));
+    setSleepSeconds(totalSeconds % 60);
+    setLaserMode(false);
+    stopFocusTimer();
+    onStartSleep?.(totalSeconds);
+    setShowSleepSetup(false);
+    setShowOptionsPopup(false);
+  };
+
+  const isActivityBusy =
+    sleepActive ||
+    focusActive ||
+    laserMode ||
+    (currentInteractState !== 'idle' && currentInteractState !== 'laser');
+
+  useEffect(() => {
+    if (idleResetKey < 1) return;
+    setFocusActive(false);
+    setFocusRemaining(0);
+    setShowOptionsPopup(false);
+    setShowFocusSetup(false);
+    setShowSleepSetup(false);
+    setFeedDrawerOpen(false);
+  }, [idleResetKey]);
 
   const formatFocusTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -515,19 +576,31 @@ export default function PetWidget({
   };
 
   // Embedded popup activities callbacks
-  const handleAction = (activeType: PetState, statsBonus: Partial<PetStats>, msg: string) => {
+  const handleAction = (activeType: PetState, statsBonus?: Partial<PetStats>) => {
     setShowOptionsPopup(false);
+    const turningLaserOn = activeType === 'laser' && !laserMode;
     setLaserMode(activeType === 'laser');
 
-    // Update stats
-    setStats((prev) => ({
-      ...prev,
-      love: prev.love + (statsBonus.love || 0),
-      happiness: Math.min(100, prev.happiness + (statsBonus.happiness || 0)),
-      energy: Math.min(100, Math.max(0, prev.energy + (statsBonus.energy || 0))),
-      cleanliness: Math.min(100, prev.cleanliness + (statsBonus.cleanliness || 0)),
-      hunger: Math.max(0, Math.min(100, prev.hunger + (statsBonus.hunger || 0))),
-    }));
+    if (activityRewards) {
+      if (activeType === 'petting') applyActivityStatBonus(activityRewards.petting, setStats);
+      else if (activeType === 'licking') applyActivityStatBonus(activityRewards.licking, setStats);
+      else if (activeType === 'dancing') applyActivityStatBonus(activityRewards.dancing, setStats);
+      else if (turningLaserOn) applyActivityStatBonus(activityRewards.laser, setStats);
+      else if (statsBonus && Object.keys(statsBonus).length > 0) {
+        applyActivityStatBonus(statsBonus as import('../types').ActivityStatBonus, setStats);
+      }
+    } else if (statsBonus) {
+      applyActivityStatBonus(
+        {
+          happiness: statsBonus.happiness || 0,
+          energy: statsBonus.energy || 0,
+          cleanliness: statsBonus.cleanliness || 0,
+        },
+        setStats
+      );
+    }
+
+    if (sleepActive) return;
 
     // Trigger animation states
     if (activeType !== 'idle' && activeType !== 'laser') {
@@ -552,12 +625,13 @@ export default function PetWidget({
               className="bg-slate-900/90 text-[10px] text-indigo-300 font-bold border border-slate-800 px-3 py-1 rounded-full shadow-md flex items-center gap-1.5 backdrop-blur-sm"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-              {currentInteractState === 'idle' && 'Cozy Sitting 🐾'}
+              {currentInteractState === 'idle' && `${petName} — Cozy 🐾`}
               {currentInteractState === 'petting' && 'Purring Loudly... ❤'}
               {currentInteractState === 'licking' && 'Grooming Shiny Fur ✨'}
               {(currentInteractState === 'eating' || String(currentInteractState).startsWith('food:')) && 'Crunching Snacks 🍕'}
               {currentInteractState === 'dancing' && 'Grooving on Beats 🎵'}
               {currentInteractState === 'studying' && 'Focus Partner Mode 📚'}
+              {currentInteractState === 'sleep' && `Dreaming Zzz… ${formatDurationSeconds(sleepRemaining)}`}
               {currentInteractState === 'laser' && 'Active Laser Play 🔴'}
             </motion.div>
           </AnimatePresence>
@@ -661,16 +735,18 @@ export default function PetWidget({
                 {/* Standard grid */}
                 <div className="grid grid-cols-3 gap-2 text-center">
                   <button
-                    onClick={() => handleAction('petting', { love: 12, happiness: 15 }, 'purr')}
-                    className="flex flex-col items-center justify-center p-2 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/80 rounded-xl text-rose-300 transition-all cursor-pointer transform hover:scale-105"
+                    onClick={() => handleAction('petting')}
+                    disabled={sleepActive}
+                    className="flex flex-col items-center justify-center p-2 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/80 rounded-xl text-rose-300 transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none"
                   >
                     <Heart className="w-4 h-4 animate-pulse fill-rose-500/20" />
                     <span className="text-[8px] font-extrabold mt-1">Pet Cat</span>
                   </button>
 
                   <button
-                    onClick={() => handleAction('licking', { cleanliness: 25, love: 5 }, 'lick')}
-                    className="flex flex-col items-center justify-center p-2 bg-sky-950/40 hover:bg-sky-900/60 border border-sky-800/80 rounded-xl text-sky-300 transition-all cursor-pointer transform hover:scale-105"
+                    onClick={() => handleAction('licking')}
+                    disabled={sleepActive}
+                    className="flex flex-col items-center justify-center p-2 bg-sky-950/40 hover:bg-sky-900/60 border border-sky-800/80 rounded-xl text-sky-300 transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none"
                   >
                     <Sparkles className="w-4 h-4 text-sky-400" />
                     <span className="text-[8px] font-extrabold mt-1">Groom Fur</span>
@@ -678,7 +754,8 @@ export default function PetWidget({
 
                   <button
                     onClick={() => setFeedDrawerOpen(!feedDrawerOpen)}
-                    className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all cursor-pointer transform hover:scale-105 ${
+                    disabled={sleepActive}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none ${
                       feedDrawerOpen
                         ? 'bg-amber-800 border-amber-500 text-white animate-pulse'
                         : 'bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/80 text-amber-305 hover:text-amber-300'
@@ -689,16 +766,18 @@ export default function PetWidget({
                   </button>
 
                   <button
-                    onClick={() => handleAction('dancing', { happiness: 25, energy: -15, love: 10 }, 'dance')}
-                    className="flex flex-col items-center justify-center p-2 bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/80 rounded-xl text-indigo-305 text-indigo-300 transition-all cursor-pointer transform hover:scale-105"
+                    onClick={() => handleAction('dancing')}
+                    disabled={sleepActive}
+                    className="flex flex-col items-center justify-center p-2 bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/80 rounded-xl text-indigo-305 text-indigo-300 transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none"
                   >
                     <Music className="w-4 h-4" />
                     <span className="text-[8px] font-extrabold mt-1">Dance Beat</span>
                   </button>
 
                   <button
-                    onClick={() => handleAction('laser', {}, 'laser')}
-                    className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all cursor-pointer transform hover:scale-105 ${
+                    onClick={() => handleAction('laser')}
+                    disabled={sleepActive}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none ${
                       laserMode
                         ? 'bg-red-650 border-red-500 text-white animate-pulse'
                         : 'bg-red-950/40 hover:bg-red-900/60 border border-red-800/80 text-red-305 hover:text-red-350'
@@ -708,22 +787,37 @@ export default function PetWidget({
                     <span className="text-[8px] font-extrabold mt-1">Laser Play</span>
                   </button>
 
-                  <button
-                    onClick={() => handleAction('studying', { energy: 35 }, 'sleep')}
-                    className="flex flex-col items-center justify-center p-2 bg-slate-950/45 hover:bg-slate-900/60 border border-slate-800 rounded-xl text-slate-350 transition-all cursor-pointer transform hover:scale-105"
-                  >
-                    <Moon className="w-4 h-4" />
-                    <span className="text-[8px] font-extrabold mt-1">Take Nap</span>
-                  </button>
+                  {sleepActive ? (
+                    <button
+                      onClick={() => {
+                        onWakeUp?.();
+                        setShowOptionsPopup(false);
+                      }}
+                      className="flex flex-col items-center justify-center p-2 bg-amber-700/80 hover:bg-amber-600 border border-amber-500 rounded-xl text-amber-100 transition-all cursor-pointer transform hover:scale-105"
+                    >
+                      <Moon className="w-4 h-4" />
+                      <span className="text-[8px] font-extrabold mt-1">Wake Up</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setShowSleepSetup(true)}
+                      disabled={focusActive}
+                      className="flex flex-col items-center justify-center p-2 bg-slate-950/45 hover:bg-slate-900/60 border border-slate-800 rounded-xl text-slate-350 transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40"
+                    >
+                      <Moon className="w-4 h-4" />
+                      <span className="text-[8px] font-extrabold mt-1">Take Nap</span>
+                    </button>
+                  )}
 
                   {assets?.customFeatures?.map((feat) => (
                     <button
                       key={feat.id}
+                      disabled={sleepActive}
                       onClick={() => {
                         const bonuses = feat.statsBonus || {};
                         handleAction(feat.id as PetState, bonuses, feat.name);
                       }}
-                      className="flex flex-col items-center justify-center p-2 bg-slate-900/40 hover:bg-slate-800/60 border border-slate-850 rounded-xl text-indigo-200 hover:text-white transition-all cursor-pointer transform hover:scale-105"
+                      className="flex flex-col items-center justify-center p-2 bg-slate-900/40 hover:bg-slate-800/60 border border-slate-850 rounded-xl text-indigo-200 hover:text-white transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none"
                     >
                       <span className="text-xs">🎮</span>
                       <span className="text-[8px] font-extrabold mt-1 truncate max-w-full" title={feat.name}>
@@ -764,9 +858,27 @@ export default function PetWidget({
                       Focus running: {formatFocusTime(focusRemaining)}
                     </div>
                   )}
+                  {sleepActive && (
+                    <div className="text-center text-[9px] font-black text-indigo-200 bg-slate-950/70 border border-indigo-900/50 rounded-lg py-1">
+                      Sleeping: {formatDurationSeconds(sleepRemaining)}
+                    </div>
+                  )}
                 </div>
 
               </div>
+
+              {isActivityBusy && onReturnToIdle && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onReturnToIdle();
+                    setShowOptionsPopup(false);
+                  }}
+                  className="w-full py-2 bg-slate-700 hover:bg-slate-600 text-white font-extrabold rounded-xl text-[9px] uppercase tracking-wider cursor-pointer"
+                >
+                  Return to Idle
+                </button>
+              )}
 
               {/* Hot-spot custom duration timer controller */}
               <div className="flex items-center gap-1.5 mt-2 bg-slate-900 px-3 py-1 rounded-full border border-slate-800 shadow-lg select-none">
@@ -813,6 +925,77 @@ export default function PetWidget({
               >
                 ↘
               </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showSleepSetup && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.85 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.85 }}
+              className={`absolute inset-0 z-50 flex flex-col items-center justify-center p-5 transition-all ${getPopupBgStyle()}`}
+            >
+              <button
+                onClick={() => setShowSleepSetup(false)}
+                className="absolute top-2 right-2 p-1.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-full transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+              <div className="text-[10px] uppercase font-black tracking-widest text-indigo-400 mb-3">
+                Start Sleep Timer
+              </div>
+              <div className="w-full bg-slate-950/70 border border-slate-800 rounded-2xl p-3 space-y-3 text-center">
+                <label className="block text-[9px] font-black uppercase text-slate-400 tracking-wider">
+                  Nap duration
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: 'hr', value: sleepHours, setter: setSleepHours, max: 23 },
+                    { label: 'min', value: sleepMinutes, setter: setSleepMinutes, max: 59 },
+                    { label: 'sec', value: sleepSeconds, setter: setSleepSeconds, max: 59 },
+                  ].map((field) => (
+                    <label key={field.label} className="space-y-1">
+                      <input
+                        type="number"
+                        min="0"
+                        max={field.max}
+                        value={field.value}
+                        onChange={(e) => field.setter(Math.max(0, Math.min(field.max, parseInt(e.target.value) || 0)))}
+                        className="w-full text-center bg-slate-900 border border-slate-700 rounded-xl px-2 py-2 text-lg font-black text-indigo-300 font-mono"
+                      />
+                      <span className="block text-[8px] uppercase font-black text-slate-500">{field.label}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[
+                    { label: '15m', h: 0, m: 15, s: 0 },
+                    { label: '30m', h: 0, m: 30, s: 0 },
+                    { label: '1h', h: 1, m: 0, s: 0 },
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      onClick={() => {
+                        setSleepHours(preset.h);
+                        setSleepMinutes(preset.m);
+                        setSleepSeconds(preset.s);
+                      }}
+                      className="py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg text-[9px] font-bold text-slate-300 cursor-pointer"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={startSleepTimer}
+                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold rounded-xl shadow-md transition-all cursor-pointer text-xs uppercase"
+                >
+                  Start Nap
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -897,7 +1080,7 @@ export default function PetWidget({
           )}
         </AnimatePresence>
 
-        {/* FLOAT STATS HUD CARD ON HOVER - Displays real love, happiness, energy, and hunger progress */}
+        {/* FLOAT STATS HUD — happiness, energy, cleanliness */}
         <AnimatePresence>
           {isHovered && !showOptionsPopup && (
             <motion.div
@@ -907,7 +1090,7 @@ export default function PetWidget({
               className="absolute z-50 bg-slate-900/95 backdrop-blur-md border border-slate-800 text-white rounded-2xl p-4 shadow-2xl w-[230px] pointer-events-none select-none flex flex-col gap-2.5 md:left-full md:top-0 md:ml-4 left-1/2 -translate-x-1/2 bottom-[105%] mb-2"
             >
               <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400">Companion Stats HUD</span>
+                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400">{petName}</span>
               </div>
 
               <div className="space-y-2 text-[10px] font-bold">
@@ -1076,6 +1259,21 @@ export default function PetWidget({
           <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 bg-slate-950/85 text-indigo-200 border border-indigo-800/60 rounded-full px-3 py-1 text-[10px] font-black font-mono shadow-lg pointer-events-none">
             {formatFocusTime(focusRemaining)}
           </div>
+        )}
+        {sleepActive && (
+          <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 bg-slate-950/85 text-indigo-100 border border-indigo-800/60 rounded-full px-3 py-1 text-[10px] font-black font-mono shadow-lg pointer-events-none flex items-center gap-1">
+            <Moon className="w-3 h-3" />
+            {formatDurationSeconds(sleepRemaining)}
+          </div>
+        )}
+        {!compactMode && isActivityBusy && onReturnToIdle && !showOptionsPopup && (
+          <button
+            type="button"
+            onClick={onReturnToIdle}
+            className="electron-no-drag absolute -bottom-7 right-0 z-[60] bg-slate-800 hover:bg-slate-700 text-white border border-slate-600 rounded-full px-2.5 py-1 text-[9px] font-black shadow-lg cursor-pointer"
+          >
+            Return to Idle
+          </button>
         )}
       </div>
 
