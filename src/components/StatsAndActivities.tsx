@@ -8,11 +8,13 @@ import { PetStats, PetState, CustomAssets, CustomFeature, CompanionSettings, Foo
 import { DEFAULT_FOODS, getFoodAssetKey } from '../defaults';
 import {
   formatStatScore,
+  formatWeightScaleLabel,
   formatDurationSeconds,
   durationToSeconds,
   applyActivityStatBonus,
   FOCUS_REFERENCE_MINUTES,
 } from '../utils/companionSettings';
+import WeightScaleBar from './WeightScaleBar';
 import {
   Heart,
   Sparkles,
@@ -189,9 +191,10 @@ export default function StatsAndActivities({
   };
 
   const statTiles = [
-    { label: 'Happy', emoji: '😊', value: stats.happiness, className: 'bg-emerald-50 border-emerald-100 text-emerald-700' },
-    { label: 'Clean', emoji: '✨', value: stats.cleanliness, className: 'bg-indigo-50 border-indigo-100 text-indigo-700' },
-    { label: 'Energy', emoji: '⚡', value: stats.energy, className: 'bg-amber-50 border-amber-100 text-amber-700' },
+    { label: 'Happy', emoji: '😊', value: stats.happiness, display: `${formatStatScore(stats.happiness)}/100`, className: 'bg-emerald-50 border-emerald-100 text-emerald-700' },
+    { label: 'Clean', emoji: '✨', value: stats.cleanliness, display: `${formatStatScore(stats.cleanliness)}/100`, className: 'bg-indigo-50 border-indigo-100 text-indigo-700' },
+    { label: 'Energy', emoji: '⚡', value: stats.energy, display: `${formatStatScore(stats.energy)}/100`, className: 'bg-amber-50 border-amber-100 text-amber-700' },
+    { label: 'Weight', emoji: '⚖️', value: stats.weight, display: formatWeightScaleLabel(stats.weight), className: 'bg-rose-50 border-rose-100 text-rose-700' },
   ];
 
   return (
@@ -213,14 +216,20 @@ export default function StatsAndActivities({
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 text-[10px] font-bold">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] font-bold">
           {statTiles.map((t) => (
             <div key={t.label} className={`border rounded-xl p-2 ${t.className}`}>
               {t.emoji} {t.label}{' '}
-              <span className="font-mono">{formatStatScore(t.value)}</span>
-              <span className="text-slate-400 font-normal">/100</span>
+              <span className="font-mono">{t.display}</span>
             </div>
           ))}
+        </div>
+
+        <div className="bg-rose-50/80 border border-rose-200 rounded-xl p-3">
+          <span className="text-[10px] font-black text-rose-800 uppercase tracking-wider block mb-2">
+            ⚖️ Weight scale
+          </span>
+          <WeightScaleBar weightKg={stats.weight} />
         </div>
 
         {/* Snack inventory */}

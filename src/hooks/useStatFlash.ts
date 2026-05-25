@@ -7,10 +7,11 @@ import { useEffect, useRef, useState } from 'react';
 import { PetStats } from '../types';
 import { FlashStatKey, StatFlashMap } from '../components/StatChangeFlash';
 
-const STAT_KEYS: FlashStatKey[] = ['happiness', 'energy', 'cleanliness'];
+const STAT_KEYS: FlashStatKey[] = ['happiness', 'energy', 'cleanliness', 'weight'];
 const FLASH_MS = 2000;
 /** Ignore tiny passive drift (e.g. decay ticks); feature bonuses are usually ≥ 1 */
 const MIN_DELTA = 1;
+const MIN_WEIGHT_DELTA_KG = 0.05;
 
 export function useStatFlash(stats: PetStats, flashDurationMs = FLASH_MS) {
   const prevStatsRef = useRef(stats);
@@ -29,8 +30,11 @@ export function useStatFlash(stats: PetStats, flashDurationMs = FLASH_MS) {
     const nextFlash: StatFlashMap = {};
 
     for (const key of STAT_KEYS) {
-      const delta = Math.round(stats[key] - prev[key]);
-      if (Math.abs(delta) >= MIN_DELTA) {
+      const rawDelta = stats[key] - prev[key];
+      const delta =
+        key === 'weight' ? Math.round(rawDelta * 100) / 100 : Math.round(rawDelta);
+      const threshold = key === 'weight' ? MIN_WEIGHT_DELTA_KG : MIN_DELTA;
+      if (Math.abs(delta) >= threshold) {
         nextFlash[key] = { delta };
       }
     }

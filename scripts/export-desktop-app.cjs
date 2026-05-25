@@ -167,6 +167,19 @@ function runCommand(command, args) {
   });
 }
 
+async function cleanStaleWinBuildArtifacts() {
+  try {
+    const entries = await fs.readdir(releaseDir);
+    await Promise.all(
+      entries
+        .filter((name) => name.includes('.nsis.7z') || name.endsWith('.nsis.7z.tmp'))
+        .map((name) => fs.rm(path.join(releaseDir, name), { force: true }))
+    );
+  } catch {
+    /* release dir may not exist yet */
+  }
+}
+
 async function buildDesktopPackage(buildFor) {
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   await runCommand(npmCommand, ['run', 'build']);
@@ -175,11 +188,9 @@ async function buildDesktopPackage(buildFor) {
   const builderArgs = ['electron-builder'];
 
   if (buildFor === 'win32') {
-    if (process.platform !== 'win32') {
-      builderArgs.push('--win', 'portable', '--x64');
-    } else {
-      builderArgs.push('--win', '--x64');
-    }
+    await cleanStaleWinBuildArtifacts();
+    // Portable .exe only — NSIS cross-build on Mac often fails (missing .nsis.7z).
+    builderArgs.push('--win', 'portable', '--x64');
   } else if (buildFor === 'darwin') {
     if (process.platform === 'darwin') {
       builderArgs.push('--mac', 'dmg', 'zip', '--arm64');

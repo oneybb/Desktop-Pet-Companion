@@ -32,7 +32,14 @@ import TransparentCatImage from './TransparentCatImage';
 import StatChangeFlash from './StatChangeFlash';
 import { useStatFlash } from '../hooks/useStatFlash';
 import { isDisplayableMediaUrl } from '../utils/mediaUrl';
-import { formatStatScore, formatDurationSeconds, durationToSeconds, applyActivityStatBonus } from '../utils/companionSettings';
+import {
+  formatStatScore,
+  formatDurationSeconds,
+  durationToSeconds,
+  applyActivityStatBonus,
+  normalizeStatBonus,
+} from '../utils/companionSettings';
+import WeightScaleBar from './WeightScaleBar';
 
 interface PetWidgetProps {
   currentInteractState: PetState;
@@ -579,7 +586,7 @@ export default function PetWidget({
   };
 
   // Embedded popup activities callbacks
-  const handleAction = (activeType: PetState, statsBonus?: Partial<PetStats>) => {
+  const handleAction = (activeType: PetState, statsBonus?: Partial<PetStats>, _actionLabel?: string) => {
     setShowOptionsPopup(false);
     const turningLaserOn = activeType === 'laser' && !laserMode;
     setLaserMode(activeType === 'laser');
@@ -593,14 +600,7 @@ export default function PetWidget({
         applyActivityStatBonus(statsBonus as import('../types').ActivityStatBonus, setStats);
       }
     } else if (statsBonus) {
-      applyActivityStatBonus(
-        {
-          happiness: statsBonus.happiness || 0,
-          energy: statsBonus.energy || 0,
-          cleanliness: statsBonus.cleanliness || 0,
-        },
-        setStats
-      );
+      applyActivityStatBonus(normalizeStatBonus(statsBonus as import('../types').ActivityStatBonus), setStats);
     }
 
     if (sleepActive) return;
@@ -748,7 +748,10 @@ export default function PetWidget({
                     <p className="text-[9px] font-bold text-violet-200/90 truncate max-w-[180px]">with {petName}</p>
                   </div>
                   <button
-                    onClick={() => setShowOptionsPopup(false)}
+                    onClick={() => {
+                      setFeedDrawerOpen(false);
+                      setShowOptionsPopup(false);
+                    }}
                     className="p-2 text-violet-100/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-colors cursor-pointer shrink-0"
                     title="Close"
                   >
@@ -757,6 +760,39 @@ export default function PetWidget({
                 </div>
                 <p className="text-[8px] text-violet-200/70 mt-1 font-medium">Pick a thing · drag ↘ to stretch~</p>
               </div>
+
+              <AnimatePresence>
+                {feedDrawerOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="shrink-0 overflow-hidden border-b border-amber-400/35 bg-gradient-to-b from-amber-500/25 to-amber-950/40 shadow-[0_8px_24px_rgba(245,158,11,0.2)]"
+                  >
+                    <div className="px-3 py-2.5 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-amber-100">
+                          Pick a snack
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setFeedDrawerOpen(false)}
+                          className="text-[8px] font-bold text-amber-200/80 hover:text-white px-2 py-0.5 rounded-full bg-white/10 hover:bg-white/20 cursor-pointer"
+                        >
+                          Close
+                        </button>
+                      </div>
+                      <p className="text-[8px] font-medium text-amber-200/80 text-center -mt-1">
+                        Drag a treat onto {petName}
+                      </p>
+                      <div className="grid grid-cols-4 gap-1.5 w-full">
+                        {(assets.foods || DEFAULT_FOODS).map((food) => renderFoodDragItem(food))}
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <div className="flex-1 min-h-0 overflow-y-auto w-full px-3 py-2.5 space-y-3 scrollbar-thin scrollbar-thumb-violet-800/60 scrollbar-track-transparent">
                 <div className="rounded-2xl bg-white/5 border border-white/10 p-2 space-y-2">
@@ -785,7 +821,15 @@ export default function PetWidget({
                   <p className="text-[7px] font-black uppercase tracking-widest text-amber-300/90 px-0.5">Snacks & play</p>
                   <div className="grid grid-cols-3 gap-2">
                     <button
-                      onClick={() => setFeedDrawerOpen(!feedDrawerOpen)}
+                      onClick={() => {
+                        if (feedDrawerOpen) {
+                          setFeedDrawerOpen(false);
+                        } else {
+                          setFeedDrawerOpen(true);
+                          setShowSleepSetup(false);
+                          setShowFocusSetup(false);
+                        }
+                      }}
                       disabled={sleepActive}
                       className={actionTileClass(
                         feedDrawerOpen
@@ -794,7 +838,7 @@ export default function PetWidget({
                       )}
                     >
                       <Utensils className="w-4 h-4" />
-                      <span className="text-[8px] font-extrabold">{feedDrawerOpen ? 'Close' : 'Feed'}</span>
+                      <span className="text-[8px] font-extrabold">Feed</span>
                     </button>
                     <button
                       onClick={() => handleAction('dancing')}
@@ -835,7 +879,10 @@ export default function PetWidget({
                       </button>
                     ) : (
                       <button
-                        onClick={() => setShowSleepSetup(true)}
+                        onClick={() => {
+                          setFeedDrawerOpen(false);
+                          setShowSleepSetup(true);
+                        }}
                         disabled={focusActive}
                         className={actionTileClass('bg-slate-500/25 border-slate-400/30 text-slate-100')}
                       >
@@ -844,7 +891,10 @@ export default function PetWidget({
                       </button>
                     )}
                     <button
-                      onClick={() => setShowFocusSetup(true)}
+                      onClick={() => {
+                        setFeedDrawerOpen(false);
+                        setShowFocusSetup(true);
+                      }}
                       disabled={sleepActive}
                       className={actionTileClass('bg-indigo-500/25 border-indigo-400/35 text-indigo-100')}
                     >
@@ -901,16 +951,6 @@ export default function PetWidget({
                   </div>
                 )}
 
-                {feedDrawerOpen && (
-                  <div className="rounded-2xl bg-amber-500/10 border border-amber-400/25 p-2.5 animate-fade-in space-y-2">
-                    <p className="text-[8px] font-black uppercase tracking-wider text-amber-200 text-center">
-                      Drag a treat onto {petName}
-                    </p>
-                    <div className="grid grid-cols-4 gap-1.5 w-full">
-                      {(assets.foods || DEFAULT_FOODS).map((food) => renderFoodDragItem(food))}
-                    </div>
-                  </div>
-                )}
               </div>
 
               {isActivityBusy && onReturnToIdle && (
@@ -1106,9 +1146,9 @@ export default function PetWidget({
               </span>
               {(
                 [
-                  { key: 'happiness', emoji: '😊', label: 'Happy', color: 'bg-emerald-400', text: 'text-emerald-300', value: stats.happiness },
-                  { key: 'energy', emoji: '⚡', label: 'Energy', color: 'bg-amber-400', text: 'text-amber-300', value: stats.energy },
-                  { key: 'cleanliness', emoji: '✨', label: 'Clean', color: 'bg-violet-400', text: 'text-violet-300', value: stats.cleanliness },
+                  { key: 'happiness', emoji: '😊', label: 'Happy', color: 'bg-emerald-400', text: 'text-emerald-300', value: stats.happiness, display: formatStatScore(stats.happiness), barPct: stats.happiness },
+                  { key: 'energy', emoji: '⚡', label: 'Energy', color: 'bg-amber-400', text: 'text-amber-300', value: stats.energy, display: formatStatScore(stats.energy), barPct: stats.energy },
+                  { key: 'cleanliness', emoji: '✨', label: 'Clean', color: 'bg-violet-400', text: 'text-violet-300', value: stats.cleanliness, display: formatStatScore(stats.cleanliness), barPct: stats.cleanliness },
                 ] as const
               ).map((row) => (
                 <div key={row.key} className="space-y-0.5">
@@ -1116,13 +1156,16 @@ export default function PetWidget({
                     <span>
                       {row.emoji} {row.label}
                     </span>
-                    <span className="font-mono opacity-90">{formatStatScore(row.value)}</span>
+                    <span className="font-mono opacity-90">{row.display}</span>
                   </div>
                   <div className="w-full bg-slate-800/90 rounded-full overflow-hidden" style={{ height: statsBarHeight }}>
-                    <div className={`${row.color} h-full rounded-full transition-all duration-300`} style={{ width: `${row.value}%` }} />
+                    <div className={`${row.color} h-full rounded-full transition-all duration-300`} style={{ width: `${row.barPct}%` }} />
                   </div>
                 </div>
               ))}
+              <div className="pt-1 border-t border-slate-800/80">
+                <WeightScaleBar weightKg={stats.weight} compact showKg />
+              </div>
             </motion.div>
           )}
         </AnimatePresence>

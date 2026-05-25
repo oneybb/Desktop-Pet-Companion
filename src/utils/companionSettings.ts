@@ -1,5 +1,9 @@
 import { FoodItem, PetStats, CompanionSettings, ActivityStatBonus, ActivityRewards } from '../types';
 import { DEFAULT_FOODS, DEFAULT_PET_NAME } from '../defaults';
+import { clampPetWeightKg, WEIGHT_KG_MIN, WEIGHT_KG_MAX } from './weightScale';
+
+export { clampPetWeightKg, WEIGHT_KG_MIN, WEIGHT_KG_MAX };
+export { formatWeightKg, formatWeightScaleLabel, formatWeightScaleShort, weightToScalePercent, getWeightScaleTier } from './weightScale';
 
 export const FOCUS_REFERENCE_MINUTES = 25;
 
@@ -17,11 +21,11 @@ export const DEFAULT_COMPANION_SETTINGS: CompanionSettings = {
     snacks: [],
   },
   activityRewards: {
-    petting: { happiness: 15, energy: 0, cleanliness: 0 },
-    licking: { happiness: 0, energy: 0, cleanliness: 25 },
-    dancing: { happiness: 25, energy: -15, cleanliness: 0 },
-    laser: { happiness: 5, energy: -5, cleanliness: 0 },
-    sleep: { happiness: 0, energy: 45, cleanliness: 0 },
+    petting: { happiness: 15, energy: 0, cleanliness: 0, weight: 0 },
+    licking: { happiness: 0, energy: 0, cleanliness: 25, weight: 0 },
+    dancing: { happiness: 25, energy: -15, cleanliness: 0, weight: -0.05 },
+    laser: { happiness: 5, energy: -5, cleanliness: 0, weight: 0 },
+    sleep: { happiness: 0, energy: 45, cleanliness: 0, weight: 0 },
   },
   poseMediaSlideshowSeconds: 0,
   snackInventory: Object.fromEntries(DEFAULT_FOODS.map((f) => [f.id, 1])),
@@ -34,10 +38,12 @@ export const ACTIVITY_STAT_FIELDS: {
   hint: string;
   min: number;
   max: number;
+  step?: number;
 }[] = [
   { key: 'happiness', label: 'Happiness', hint: '0–100 bar', min: -100, max: 100 },
   { key: 'energy', label: 'Energy', hint: '0–100 bar', min: -100, max: 100 },
   { key: 'cleanliness', label: 'Cleanliness', hint: '0–100 bar', min: -100, max: 100 },
+  { key: 'weight', label: 'Weight', hint: 'kg on scale (+/−)', min: -2, max: 2, step: 0.05 },
 ];
 
 export function normalizeStatBonus(raw?: Partial<ActivityStatBonus> | null): ActivityStatBonus {
@@ -45,6 +51,7 @@ export function normalizeStatBonus(raw?: Partial<ActivityStatBonus> | null): Act
     happiness: raw?.happiness ?? 0,
     energy: raw?.energy ?? 0,
     cleanliness: raw?.cleanliness ?? 0,
+    weight: raw?.weight ?? 0,
   };
 }
 
@@ -118,6 +125,15 @@ export function loadCompanionSettings(): CompanionSettings {
     }
   }
   return { ...DEFAULT_COMPANION_SETTINGS };
+}
+
+/** Snapshot before React effects run — used to avoid re-applying bundled export seed every launch. */
+export function hadPersistedCompanionSettingsOnLaunch(): boolean {
+  try {
+    return localStorage.getItem('desktop_pet_companion_settings') != null;
+  } catch {
+    return false;
+  }
 }
 
 /** Ensure every known food has an inventory slot; new foods get initialSnackCounts or 1 */
@@ -217,6 +233,7 @@ export function applyActivityStatBonus(
     happiness: Math.min(100, Math.max(0, prev.happiness + b.happiness)),
     energy: Math.min(100, Math.max(0, prev.energy + b.energy)),
     cleanliness: Math.min(100, Math.max(0, prev.cleanliness + b.cleanliness)),
+    weight: clampPetWeightKg(prev.weight + b.weight),
   }));
 }
 

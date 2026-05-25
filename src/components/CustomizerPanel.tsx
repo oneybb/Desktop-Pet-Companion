@@ -88,6 +88,7 @@ export default function CustomizerPanel({
   const [bonusHappiness, setBonusHappiness] = useState(15);
   const [bonusEnergy, setBonusEnergy] = useState(-5);
   const [bonusClean, setBonusClean] = useState(0);
+  const [bonusWeight, setBonusWeight] = useState(0);
 
   const { petName, activityRewards, decayPerHour, focusRewardPer25Min, poseMediaSlideshowSeconds } =
     companionSettings;
@@ -182,14 +183,15 @@ export default function CustomizerPanel({
     onChange: (stat: keyof ActivityStatBonus, value: number) => void;
     compact?: boolean;
   }) => (
-    <div className={`grid ${compact ? 'grid-cols-3' : 'grid-cols-1 sm:grid-cols-3'} gap-2`}>
-      {ACTIVITY_STAT_FIELDS.map(({ key, label, hint, min, max }) => (
+    <div className={`grid ${compact ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4'} gap-2`}>
+      {ACTIVITY_STAT_FIELDS.map(({ key, label, hint, min, max, step }) => (
         <label key={key} className="flex flex-col gap-1 text-[10px] font-bold text-slate-600">
           <span className="uppercase tracking-wide text-slate-500">{label}</span>
           <input
             type="number"
             min={min}
             max={max}
+            step={step ?? 1}
             value={bonus[key]}
             onChange={(e) => onChange(key, parseFloat(e.target.value) || 0)}
             className="w-full text-center bg-white border border-slate-300 rounded-lg px-2 py-2 font-mono text-sm text-indigo-800 font-black"
@@ -287,6 +289,7 @@ export default function CustomizerPanel({
         happiness: Number(bonusHappiness),
         energy: Number(bonusEnergy),
         cleanliness: Number(bonusClean),
+        weight: Number(bonusWeight),
       }
     };
 
@@ -346,7 +349,7 @@ export default function CustomizerPanel({
       name: newFoodName.trim(),
       emoji: newFoodEmoji.trim() || '🍪',
       description: newFoodDescription.trim() || 'Custom snack',
-      statsBonus: { happiness: 5, energy: 5, cleanliness: 0 },
+      statsBonus: { happiness: 5, energy: 5, cleanliness: 0, weight: 0.1 },
     };
 
     setAssets((prev) => ({
@@ -626,8 +629,8 @@ export default function CustomizerPanel({
             </div>
 
             <p className="text-xs text-slate-600 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 leading-relaxed">
-              Each action changes the three bars only: Happiness, Energy, and Cleanliness. Use negative numbers to
-              lower a bar (e.g. dance costing energy).
+              Each action can change Happiness, Energy, Cleanliness (0–100 bars), and Weight on the scale (0.5–7.5&nbsp;kg,
+              with 4&nbsp;kg in the middle: underweight → fattie boom boom). Use negative kg to slim down.
             </p>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -1062,16 +1065,18 @@ export default function CustomizerPanel({
                       <span className="text-[9px] font-extrabold text-indigo-600 uppercase block mb-2">
                         Stat adjustments when activated (+/−):
                       </span>
-                      <div className="grid grid-cols-3 gap-1 text-[10px]">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 text-[10px]">
                         {[
-                          { label: 'Happy', val: bonusHappiness, set: setBonusHappiness },
-                          { label: 'Energy', val: bonusEnergy, set: setBonusEnergy },
-                          { label: 'Clean', val: bonusClean, set: setBonusClean },
+                          { label: 'Happy', val: bonusHappiness, set: setBonusHappiness, step: 1 },
+                          { label: 'Energy', val: bonusEnergy, set: setBonusEnergy, step: 1 },
+                          { label: 'Clean', val: bonusClean, set: setBonusClean, step: 1 },
+                          { label: 'Weight kg', val: bonusWeight, set: setBonusWeight, step: 0.05 },
                         ].map((item) => (
                           <label key={item.label} className="space-y-0.5 font-bold text-slate-600">
                             <span className="text-[8px] uppercase">{item.label}</span>
                             <input
                               type="number"
+                              step={item.step}
                               value={item.val}
                               onChange={(e) => item.set(Number(e.target.value))}
                               className="w-full bg-white border border-slate-200 rounded p-1 text-center font-mono text-xs"
@@ -1414,7 +1419,7 @@ export default function CustomizerPanel({
                 DESKTOP APP NOTES
               </h4>
               <p className="text-slate-600 leading-relaxed text-[11px]">
-                Choose <strong>Windows 64-bit</strong> when sharing with a PC. Building Windows installers on a Mac may fail — if so, clone the repo on a Windows machine and run <code className="bg-white px-1 py-0.5 rounded font-mono">npm run dev:export</code> there, or <code className="bg-white px-1 py-0.5 rounded font-mono">npm run desktop:dist:win</code>.
+                Choose <strong>Windows 64-bit</strong> when sharing with a PC. Mac exports produce <strong>DesktopPetCompanion-*-Portable.exe</strong> only (no NSIS Setup on Mac). For a Setup installer, build on Windows with <code className="bg-white px-1 py-0.5 rounded font-mono">npm run desktop:dist:win:setup</code>.
               </p>
               <p className="text-slate-600 leading-relaxed text-[11px]">
                 On Windows, run <strong>DesktopPetCompanion-*-Portable.exe</strong> for a single-file app, or <strong>*-Setup.exe</strong> to install. Do not unzip a Mac build or run partial downloads — that causes “searching for Desktop Pet Companion.exe” and NSIS integrity errors.

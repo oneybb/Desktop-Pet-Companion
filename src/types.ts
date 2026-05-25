@@ -9,6 +9,8 @@ export interface PetStats {
   happiness: number; // 0 - 100
   energy: number; // 0 - 100
   cleanliness: number; // 0 - 100
+  /** Body weight in kilograms */
+  weight: number;
   focusMinutes: number; // total accumulated focus minutes
   completedSessions: number; // Pomodoro count
 }
@@ -28,11 +30,12 @@ export interface UploadedFile {
   name: string;
 }
 
-/** Per-use stat deltas for an activity (+ or −), mapped to the three bars */
+/** Per-use stat deltas for an activity (+ or −): three bars and weight (kg) */
 export interface ActivityStatBonus {
   happiness: number;
   energy: number;
   cleanliness: number;
+  weight: number;
 }
 
 export interface CustomFeature {

@@ -14,12 +14,14 @@ import { advancePoseMediaIndex, getPoseMediaCount, shouldRunPoseSlideshow } from
 import { sanitizeUploadedFileUrls, isOversizedAssetsCache } from './utils/mediaUrl';
 import {
   loadCompanionSettings,
+  hadPersistedCompanionSettingsOnLaunch,
   normalizeCompanionSettings,
   syncSnackInventory,
   applyFocusSessionRewards,
   applyActivityStatBonus,
   FOCUS_REFERENCE_MINUTES,
 } from './utils/companionSettings';
+import { DEFAULT_PET_WEIGHT_KG } from './defaults';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Heart, 
@@ -47,6 +49,7 @@ export default function App() {
           happiness: parsed.happiness ?? 85,
           energy: parsed.energy ?? 90,
           cleanliness: parsed.cleanliness ?? 95,
+          weight: typeof parsed.weight === 'number' ? parsed.weight : DEFAULT_PET_WEIGHT_KG,
           focusMinutes: parsed.focusMinutes ?? 0,
           completedSessions: parsed.completedSessions ?? 0,
         };
@@ -58,6 +61,7 @@ export default function App() {
       happiness: 85,
       energy: 90,
       cleanliness: 95,
+      weight: DEFAULT_PET_WEIGHT_KG,
       focusMinutes: 0,
       completedSessions: 0,
     };
@@ -287,6 +291,12 @@ export default function App() {
 
   useEffect(() => {
     const loadBundledExport = async () => {
+      // Packaged widget builds ship desktop-pet-seed.json from export — only use it on first
+      // launch. Re-applying every session overwrote stats, snack inventory, and customizations.
+      if (hadPersistedCompanionSettingsOnLaunch()) {
+        return;
+      }
+
       try {
         const response = await fetch('./desktop-pet-seed.json', { cache: 'no-store' });
         if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) {
@@ -298,7 +308,11 @@ export default function App() {
           return;
         }
 
-        setStats(seed.stats);
+        setStats({
+          ...seed.stats,
+          weight:
+            typeof seed.stats.weight === 'number' ? seed.stats.weight : DEFAULT_PET_WEIGHT_KG,
+        });
         setAssets(seed.assets);
         setCustomizer(seed.customizer);
         setCustomDuration(Math.max(1, Math.min(600, seed.customDuration || 5)));
@@ -554,6 +568,7 @@ export default function App() {
       happiness: 85,
       energy: 90,
       cleanliness: 95,
+      weight: DEFAULT_PET_WEIGHT_KG,
       focusMinutes: 0,
       completedSessions: 0,
     });

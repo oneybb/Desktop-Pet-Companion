@@ -7,8 +7,9 @@ import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PetStats } from '../types';
 import { formatStatScore } from '../utils/companionSettings';
+import { formatWeightKg, formatWeightScaleShort, weightToScalePercent } from '../utils/weightScale';
 
-export type FlashStatKey = 'happiness' | 'energy' | 'cleanliness';
+export type FlashStatKey = 'happiness' | 'energy' | 'cleanliness' | 'weight';
 
 export type StatFlashMap = Partial<Record<FlashStatKey, { delta: number }>>;
 
@@ -19,11 +20,35 @@ const STAT_ROWS: {
   text: string;
   bar: string;
   ring: string;
+  isWeight?: boolean;
 }[] = [
   { key: 'happiness', label: 'Happy', emoji: '😊', text: 'text-emerald-300', bar: 'bg-emerald-400', ring: 'ring-emerald-400/70' },
   { key: 'energy', label: 'Energy', emoji: '⚡', text: 'text-amber-300', bar: 'bg-amber-400', ring: 'ring-amber-400/70' },
   { key: 'cleanliness', label: 'Clean', emoji: '✨', text: 'text-indigo-300', bar: 'bg-indigo-400', ring: 'ring-indigo-400/70' },
+  { key: 'weight', label: 'Weight', emoji: '⚖️', text: 'text-rose-300', bar: 'bg-rose-400', ring: 'ring-rose-400/70', isWeight: true },
 ];
+
+function barWidthPercent(key: FlashStatKey, value: number): number {
+  if (key === 'weight') {
+    return weightToScalePercent(value);
+  }
+  return Math.min(100, Math.max(0, value));
+}
+
+function formatDelta(key: FlashStatKey, delta: number): string {
+  if (key === 'weight') {
+    const sign = delta > 0 ? '+' : '';
+    return `${sign}${delta.toFixed(2)}`;
+  }
+  return `${delta > 0 ? '+' : ''}${delta}`;
+}
+
+function formatValueLabel(key: FlashStatKey, value: number): string {
+  if (key === 'weight') {
+    return `${formatWeightScaleShort(value)} · ${formatWeightKg(value)}`;
+  }
+  return `${formatStatScore(value)}/100`;
+}
 
 interface StatChangeFlashProps {
   stats: PetStats;
@@ -73,6 +98,7 @@ export default function StatChangeFlash({
                 const delta = flashing[row.key]!.delta;
                 const value = stats[row.key];
                 const positive = delta > 0;
+                const prevValue = row.isWeight ? value - delta : value - delta;
                 return (
                   <div
                     key={row.key}
@@ -87,20 +113,20 @@ export default function StatChangeFlash({
                           positive ? 'text-emerald-400' : delta < 0 ? 'text-rose-400' : 'text-slate-400'
                         }`}
                       >
-                        {positive ? '+' : ''}
-                        {delta}
+                        {formatDelta(row.key, delta)}
+                        {row.isWeight ? ' kg' : ''}
                       </span>
                     </div>
                     <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden mt-1">
                       <motion.div
                         className={`h-full rounded-full ${row.bar}`}
-                        initial={{ width: `${Math.max(0, value - delta)}%` }}
-                        animate={{ width: `${value}%` }}
+                        initial={{ width: `${barWidthPercent(row.key, prevValue)}%` }}
+                        animate={{ width: `${barWidthPercent(row.key, value)}%` }}
                         transition={{ duration: 0.45, ease: 'easeOut' }}
                       />
                     </div>
                     <div className={`text-[8px] font-mono mt-0.5 ${row.text} opacity-80`}>
-                      {formatStatScore(value)}/100
+                      {formatValueLabel(row.key, value)}
                     </div>
                   </div>
                 );
