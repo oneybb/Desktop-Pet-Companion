@@ -29,6 +29,7 @@ interface CustomizerPanelProps {
   onResetStats: () => void;
   customDuration?: number;
   setCustomDuration?: (val: number) => void;
+  onFoodAdded?: (foodId: string) => void;
 }
 
 export default function CustomizerPanel({
@@ -40,6 +41,7 @@ export default function CustomizerPanel({
   onResetStats,
   customDuration = 5,
   setCustomDuration,
+  onFoodAdded,
 }: CustomizerPanelProps) {
   const [activeTab, setActiveTab] = useState<'visuals' | 'uploads' | 'foods' | 'windows'>('visuals');
   const [copiedName, setCopiedName] = useState<string | null>(null);
@@ -56,9 +58,7 @@ export default function CustomizerPanel({
   const [newFeatName, setNewFeatName] = useState('');
   const [newFeatDesc, setNewFeatDesc] = useState('');
   const [bonusHappiness, setBonusHappiness] = useState(15);
-  const [bonusLove, setBonusLove] = useState(10);
   const [bonusEnergy, setBonusEnergy] = useState(-5);
-  const [bonusHunger, setBonusHunger] = useState(5);
   const [bonusClean, setBonusClean] = useState(0);
 
   const handleFileUpload = async (key: string, event: React.ChangeEvent<HTMLInputElement>) => {
@@ -110,7 +110,7 @@ export default function CustomizerPanel({
         const existing = prev.uploadedAssets[key] || [];
         const fileToRemove = existing.find((f) => f.id === id);
         
-        if (fileToRemove) {
+        if (fileToRemove?.url.startsWith('blob:')) {
           URL.revokeObjectURL(fileToRemove.url);
         }
         
@@ -146,10 +146,10 @@ export default function CustomizerPanel({
       description: newFeatDesc.trim() || 'Custom Dynamic Interaction',
       statsBonus: {
         happiness: Number(bonusHappiness),
-        hunger: Number(bonusHunger),
+        hunger: 0,
         energy: Number(bonusEnergy),
         cleanliness: Number(bonusClean),
-        love: Number(bonusLove),
+        love: 0,
       }
     };
 
@@ -209,7 +209,7 @@ export default function CustomizerPanel({
       name: newFoodName.trim(),
       emoji: newFoodEmoji.trim() || '🍪',
       description: newFoodDescription.trim() || 'Custom snack',
-      statsBonus: { happiness: 5, hunger: -20, energy: 5, cleanliness: 0, love: 8 },
+      statsBonus: { happiness: 5, hunger: 0, energy: 5, cleanliness: 0, love: 0 },
     };
 
     setAssets((prev) => ({
@@ -228,6 +228,8 @@ export default function CustomizerPanel({
         [key]: 'cycle',
       },
     }));
+
+    onFoodAdded?.(id);
 
     setNewFoodName('');
     setNewFoodEmoji('🍪');
@@ -346,6 +348,7 @@ export default function CustomizerPanel({
     { name: 'pet_fur.mp4', desc: 'Video played when you groom or lick its fur' },
     { name: 'pet_feed.mp4', desc: 'Video played during eating/meal sessions' },
     { name: 'pet_dance.mp4', desc: 'Video played when your pet breaks into a dance' },
+    { name: 'pet_laser.png', desc: 'Picture shown during laser chase play mode' },
   ];
 
   const uploadInputsSpec = [
@@ -358,6 +361,7 @@ export default function CustomizerPanel({
     { key: 'dancing', label: 'Dancing / grooves' },
     { key: 'petting', label: 'Petting interactions' },
     { key: 'licking', label: 'Grooming / fur licks' },
+    { key: 'laser', label: 'Laser play pose' },
   ];
 
   const dynamicSpecs = (assets.customFeatures || []).map((feat) => ({
@@ -366,7 +370,12 @@ export default function CustomizerPanel({
     isCustom: true
   }));
 
-  const allSpecs = [...uploadInputsSpec, ...dynamicSpecs];
+  const foodSpecs = (assets.foods || []).map((food) => ({
+    key: getFoodAssetKey(food.id),
+    label: `${food.emoji} ${food.name} (Feed media)`,
+  }));
+
+  const allSpecs = [...uploadInputsSpec, ...foodSpecs, ...dynamicSpecs];
 
   return (
     <div className="bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-xl overflow-hidden text-slate-800 flex flex-col h-full transition-all duration-300">
@@ -681,12 +690,10 @@ export default function CustomizerPanel({
 
                     <div className="bg-white/80 border border-slate-100 rounded p-2">
                       <span className="text-[9px] font-extrabold text-indigo-600 uppercase block mb-1">XP / Pet Stat Adjustments When Activated:</span>
-                      <div className="grid grid-cols-5 gap-1.5 text-center text-[10px]">
+                      <div className="grid grid-cols-3 gap-1.5 text-center text-[10px]">
                         {[
-                          { label: '💖 Love', val: bonusLove, set: setBonusLove, min: -50, max: 100 },
                           { label: '😊 Happy', val: bonusHappiness, set: setBonusHappiness, min: -50, max: 100 },
                           { label: '⚡ Energy', val: bonusEnergy, set: setBonusEnergy, min: -50, max: 100 },
-                          { label: '🍕 Hunger', val: bonusHunger, set: setBonusHunger, min: -50, max: 100 },
                           { label: '✨ Clean', val: bonusClean, set: setBonusClean, min: -50, max: 100 },
                         ].map((item) => (
                           <div key={item.label} className="space-y-0.5">
@@ -950,11 +957,9 @@ export default function CustomizerPanel({
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-5 gap-1.5 text-center text-[10px]">
+                    <div className="grid grid-cols-3 gap-1.5 text-center text-[10px]">
                       {[
-                        ['love', 'Love'],
                         ['happiness', 'Happy'],
-                        ['hunger', 'Hunger'],
                         ['energy', 'Energy'],
                         ['cleanliness', 'Clean'],
                       ].map(([stat, label]) => (

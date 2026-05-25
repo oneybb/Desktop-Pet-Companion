@@ -88,10 +88,37 @@ export interface WidgetCustomizer {
   alwaysOnTopGuide: boolean;
 }
 
+export interface StatDecayRates {
+  happiness: number;
+  hunger: number;
+  energy: number;
+  cleanliness: number;
+}
+
+export interface FocusSnackReward {
+  foodId: string;
+  countPer25Min: number;
+}
+
+export interface FocusRewardRates {
+  happiness: number;
+  cleanliness: number;
+  energy: number;
+  snacks: FocusSnackReward[];
+}
+
+export interface CompanionSettings {
+  decayPerHour: StatDecayRates;
+  focusRewardPer25Min: FocusRewardRates;
+  snackInventory: Record<string, number>;
+  initialSnackCounts: Record<string, number>;
+}
+
 export interface DesktopPetSeed {
   stats: PetStats;
   customizer: WidgetCustomizer;
   customDuration: number;
   assets: CustomAssets;
+  companionSettings?: CompanionSettings;
   exportedAt: string;
 }

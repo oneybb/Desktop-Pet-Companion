@@ -29,6 +29,8 @@ import petStudyImg from '../assets/images/cat_tabby_study_1779630212670.png';
 import petDanceImg from '../assets/images/cat_tabby_dance_1779630251008.png';
 import petEatImg from '../assets/images/cat_tabby_eat_1779630231804.png';
 import TransparentCatImage from './TransparentCatImage';
+import { isDisplayableMediaUrl } from '../utils/mediaUrl';
+import { formatStatScore } from '../utils/companionSettings';
 
 interface PetWidgetProps {
   currentInteractState: PetState;
@@ -45,6 +47,8 @@ interface PetWidgetProps {
   customDuration?: number;
   setCustomDuration?: (val: number) => void;
   onFocusComplete?: (minutes: number) => void;
+  snackInventory?: Record<string, number>;
+  onConsumeSnack?: (foodId: string) => boolean;
 }
 
 export default function PetWidget({
@@ -62,13 +66,21 @@ export default function PetWidget({
   customDuration = 5,
   setCustomDuration,
   onFocusComplete,
+  snackInventory = {},
+  onConsumeSnack,
 }: PetWidgetProps) {
   // Popup interaction state
   const [showOptionsPopup, setShowOptionsPopup] = useState(false);
   const [feedDrawerOpen, setFeedDrawerOpen] = useState(false);
+  const [selectedFoodId, setSelectedFoodId] = useState<string | null>(null);
+  const [draggingFoodId, setDraggingFoodId] = useState<string | null>(null);
+  const [compactFeedMode, setCompactFeedMode] = useState(false);
+  const [customMediaError, setCustomMediaError] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [showFocusSetup, setShowFocusSetup] = useState(false);
+  const [focusHours, setFocusHours] = useState(0);
   const [focusMinutes, setFocusMinutes] = useState(25);
+  const [focusSeconds, setFocusSeconds] = useState(0);
   const [focusRemaining, setFocusRemaining] = useState(0);
   const [focusActive, setFocusActive] = useState(false);
   const focusTimerRef = useRef<any>(null);
@@ -121,71 +133,102 @@ export default function PetWidget({
   const widgetResizeRef = useRef<{ startX: number; startSize: number } | null>(null);
   const interactionResizeRef = useRef<{ startX: number; startY: number; width: number; height: number } | null>(null);
 
-  // Determine current asset source
-  const getAssetDetails = (): { type: 'image' | 'video'; url: string } => {
+  useEffect(() => {
+    setCustomMediaError(false);
+  }, [currentInteractState, assets.uploadedAssets]);
+
+  type AssetDetails = { type: 'image' | 'video'; url: string; fromUpload: boolean };
+
+  const getAssetDetails = (): AssetDetails => {
+    const resolveUploaded = (featKey: string): AssetDetails | null => {
+      const list = (assets.uploadedAssets[featKey] || []).filter((file) =>
+        isDisplayableMediaUrl(file.url)
+      );
+      if (list.length > 0) {
+        const activeIdx = (assets.activeIndices?.[featKey] ?? 0) % list.length;
+        const file = list[activeIdx];
+        if (file?.url) {
+          return { type: file.type, url: file.url, fromUpload: true };
+        }
+      }
+      return null;
+    };
+
+    if (String(currentInteractState).startsWith('food:')) {
+      const uploaded = resolveUploaded(currentInteractState);
+      if (uploaded) {
+        return uploaded;
+      }
+      return { type: 'image', url: petEatImg, fromUpload: false };
+    }
+
+    if (currentInteractState === 'laser') {
+      const uploaded = resolveUploaded('laser');
+      if (uploaded) {
+        return uploaded;
+      }
+      return { type: 'image', url: petIdleImg, fromUpload: false };
+    }
+
     // If workspace is active, use static paths
     if (assets.useWorkspace) {
       if (currentInteractState === 'petting' && assets.workspacePaths.videoPetting) {
-        return { type: 'video', url: assets.workspacePaths.videoPetting };
+        return { type: 'video', url: assets.workspacePaths.videoPetting, fromUpload: false };
       }
       if (currentInteractState === 'licking' && assets.workspacePaths.videoLicking) {
-        return { type: 'video', url: assets.workspacePaths.videoLicking };
+        return { type: 'video', url: assets.workspacePaths.videoLicking, fromUpload: false };
       }
       if (currentInteractState === 'eating' && assets.workspacePaths.videoEating) {
-        return { type: 'video', url: assets.workspacePaths.videoEating };
+        return { type: 'video', url: assets.workspacePaths.videoEating, fromUpload: false };
       }
       if (currentInteractState === 'dancing' && assets.workspacePaths.videoDancing) {
-        return { type: 'video', url: assets.workspacePaths.videoDancing };
+        return { type: 'video', url: assets.workspacePaths.videoDancing, fromUpload: false };
       }
 
       if (currentInteractState === 'studying') {
-        return { type: 'image', url: assets.workspacePaths.studying || petStudyImg };
+        return { type: 'image', url: assets.workspacePaths.studying || petStudyImg, fromUpload: false };
       }
       if (currentInteractState === 'shortBreak') {
-        return { type: 'image', url: assets.workspacePaths.shortBreak || petDanceImg };
+        return { type: 'image', url: assets.workspacePaths.shortBreak || petDanceImg, fromUpload: false };
       }
       if (currentInteractState === 'rest') {
-        return { type: 'image', url: assets.workspacePaths.rest || petIdleImg };
+        return { type: 'image', url: assets.workspacePaths.rest || petIdleImg, fromUpload: false };
       }
       if (currentInteractState === 'focusReward') {
-        return { type: 'image', url: assets.workspacePaths.focusReward || petStudyImg };
+        return { type: 'image', url: assets.workspacePaths.focusReward || petStudyImg, fromUpload: false };
       }
       if (currentInteractState === 'eating') {
-        return { type: 'image', url: assets.workspacePaths.eating || petEatImg };
+        return { type: 'image', url: assets.workspacePaths.eating || petEatImg, fromUpload: false };
       }
       if (currentInteractState === 'dancing') {
-        return { type: 'image', url: assets.workspacePaths.dancing || petDanceImg };
+        return { type: 'image', url: assets.workspacePaths.dancing || petDanceImg, fromUpload: false };
       }
-      return { type: 'image', url: assets.workspacePaths.idle || petIdleImg };
+      return { type: 'image', url: assets.workspacePaths.idle || petIdleImg, fromUpload: false };
     }
 
     // Direct Browser Upload Model with loop/cycle capabilities
     const featKey = currentInteractState || 'idle';
-    const list = assets.uploadedAssets[featKey] || [];
-    if (list.length > 0) {
-      const activeIdx = (assets.activeIndices?.[featKey] ?? 0) % list.length;
-      const file = list[activeIdx];
-      if (file) {
-        return { type: file.type, url: file.url };
-      }
+    const uploaded = resolveUploaded(featKey);
+    if (uploaded) {
+      return uploaded;
     }
 
     // Default static image fallback files if direct array is empty
-    if (currentInteractState === 'studying') return { type: 'image', url: petStudyImg };
-    if (currentInteractState === 'focusReward') return { type: 'image', url: petStudyImg };
-    if (String(currentInteractState).startsWith('food:')) return { type: 'image', url: petEatImg };
-    if (currentInteractState === 'eating') return { type: 'image', url: petEatImg };
-    if (currentInteractState === 'dancing') return { type: 'image', url: petDanceImg };
+    if (currentInteractState === 'studying') return { type: 'image', url: petStudyImg, fromUpload: false };
+    if (currentInteractState === 'focusReward') return { type: 'image', url: petStudyImg, fromUpload: false };
+    if (currentInteractState === 'eating') return { type: 'image', url: petEatImg, fromUpload: false };
+    if (currentInteractState === 'dancing') return { type: 'image', url: petDanceImg, fromUpload: false };
     
     // For petting or licking, if no custom upload exists, fallback to idle or standard wiggle effect
-    return { type: 'image', url: petIdleImg };
+    return { type: 'image', url: petIdleImg, fromUpload: false };
   };
 
   const asset = getAssetDetails();
 
   const featKey = currentInteractState || 'idle';
-  const list = assets.uploadedAssets[featKey] || [];
+  const list = (assets.uploadedAssets[featKey] || []).filter((file) => isDisplayableMediaUrl(file.url));
   const activeIdx = (assets.activeIndices?.[featKey] ?? 0) % (list.length || 1);
+  const showCustomMedia = asset.fromUpload && isDisplayableMediaUrl(asset.url) && !customMediaError;
 
   const cycleActiveIndex = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -275,7 +318,7 @@ export default function PetWidget({
           clearInterval(focusTimerRef.current);
           setFocusActive(false);
           setShowFocusSetup(false);
-          onFocusComplete?.(focusMinutes);
+          onFocusComplete?.(Math.max(1, Math.ceil((focusHours * 3600 + focusMinutes * 60 + focusSeconds) / 60)));
           return 0;
         }
         return prev - 1;
@@ -283,7 +326,7 @@ export default function PetWidget({
     }, 1000);
 
     return () => clearInterval(focusTimerRef.current);
-  }, [focusActive, focusRemaining, focusMinutes, onFocusComplete]);
+  }, [focusActive, focusRemaining, focusHours, focusMinutes, focusSeconds, onFocusComplete]);
 
   const handleContainerClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!laserMode || !containerRef.current) return;
@@ -324,16 +367,82 @@ export default function PetWidget({
   };
 
   const handleFeed = (foodId: string) => {
+    if (onConsumeSnack && !onConsumeSnack(foodId)) return;
     const food = (assets.foods || DEFAULT_FOODS).find((item) => item.id === foodId) || DEFAULT_FOODS[0];
-    handleAction(getFoodAssetKey(food.id), food.statsBonus, 'eat');
+    const foodKey = getFoodAssetKey(food.id);
+    handleAction(foodKey, food.statsBonus, 'eat');
+    setSelectedFoodId(null);
+    setDraggingFoodId(null);
+    setFeedDrawerOpen(false);
+    setCompactFeedMode(false);
+  };
+
+  const beginFeedDragMode = (foodId: string) => {
+    setSelectedFoodId(foodId);
     setShowOptionsPopup(false);
     setFeedDrawerOpen(false);
+    setCompactFeedMode(true);
+  };
+
+  const exitFeedDragMode = () => {
+    setCompactFeedMode(false);
+    setSelectedFoodId(null);
+    setDraggingFoodId(null);
+  };
+
+  const renderFoodDragItem = (food: (typeof DEFAULT_FOODS)[0], large = false) => {
+    const foodKey = getFoodAssetKey(food.id);
+    const mediaCount = (assets.uploadedAssets[foodKey] || []).filter((f) => isDisplayableMediaUrl(f.url)).length;
+    const isSelected = selectedFoodId === food.id;
+    const stock = snackInventory[food.id] ?? 0;
+    const outOfStock = onConsumeSnack !== undefined && stock < 1;
+    return (
+      <div
+        key={food.id}
+        draggable={!outOfStock}
+        onDragStart={(e) => {
+          if (outOfStock) {
+            e.preventDefault();
+            return;
+          }
+          e.dataTransfer.setData('text/plain', food.id);
+          e.dataTransfer.setData('application/x-desktop-pet-food', food.id);
+          e.dataTransfer.effectAllowed = 'copy';
+          setDraggingFoodId(food.id);
+          setSelectedFoodId(food.id);
+        }}
+        onDragEnd={() => setDraggingFoodId(null)}
+        onClick={() => !outOfStock && beginFeedDragMode(food.id)}
+        className={`flex flex-col items-center justify-center rounded-xl text-slate-200 transition-all text-center select-none border ${
+          large ? 'p-3 min-w-[72px]' : 'p-1.5 min-w-[56px]'
+        } ${
+          outOfStock
+            ? 'opacity-40 cursor-not-allowed bg-slate-900/50 border-slate-700'
+            : isSelected
+              ? 'bg-amber-500/90 border-amber-300 text-white shadow-lg scale-105 cursor-grab active:cursor-grabbing'
+              : mediaCount > 0
+                ? 'bg-emerald-900/70 border-emerald-500/60 hover:border-amber-300 cursor-grab active:cursor-grabbing'
+                : 'bg-slate-800/80 border-slate-600 hover:border-amber-400/60 cursor-grab active:cursor-grabbing'
+        }`}
+        title={`${food.name} — ${outOfStock ? 'out of stock' : 'drag onto the cat'}${mediaCount > 0 ? ` (${mediaCount} custom media)` : ''}`}
+      >
+        <span className={large ? 'text-3xl' : 'text-xl'}>{food.emoji}</span>
+        <span className={`text-[7px] font-black mt-0.5 ${stock < 2 ? 'text-rose-400' : 'text-amber-300'}`}>
+          ×{stock}
+        </span>
+        {!large && (
+          <span className="text-[7px] font-bold truncate max-w-[52px]">{food.name}</span>
+        )}
+      </div>
+    );
   };
 
   const startFocusTimer = () => {
-    const minutes = Math.max(1, Math.min(240, focusMinutes || 25));
-    setFocusMinutes(minutes);
-    setFocusRemaining(minutes * 60);
+    const totalSeconds = Math.max(1, Math.min(24 * 3600, focusHours * 3600 + focusMinutes * 60 + focusSeconds));
+    setFocusHours(Math.floor(totalSeconds / 3600));
+    setFocusMinutes(Math.floor((totalSeconds % 3600) / 60));
+    setFocusSeconds(totalSeconds % 60);
+    setFocusRemaining(totalSeconds);
     setFocusActive(true);
     setShowFocusSetup(false);
     setShowOptionsPopup(false);
@@ -348,9 +457,12 @@ export default function PetWidget({
   };
 
   const formatFocusTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    return hours > 0
+      ? `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+      : `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
   const beginWidgetResize = (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -603,6 +715,22 @@ export default function PetWidget({
                     <Moon className="w-4 h-4" />
                     <span className="text-[8px] font-extrabold mt-1">Take Nap</span>
                   </button>
+
+                  {assets?.customFeatures?.map((feat) => (
+                    <button
+                      key={feat.id}
+                      onClick={() => {
+                        const bonuses = feat.statsBonus || {};
+                        handleAction(feat.id as PetState, bonuses, feat.name);
+                      }}
+                      className="flex flex-col items-center justify-center p-2 bg-slate-900/40 hover:bg-slate-800/60 border border-slate-850 rounded-xl text-indigo-200 hover:text-white transition-all cursor-pointer transform hover:scale-105"
+                    >
+                      <span className="text-xs">🎮</span>
+                      <span className="text-[8px] font-extrabold mt-1 truncate max-w-full" title={feat.name}>
+                        {feat.name}
+                      </span>
+                    </button>
+                  ))}
                 </div>
 
                 {/* Focus Timer Segment */}
@@ -638,31 +766,6 @@ export default function PetWidget({
                   )}
                 </div>
 
-                {/* Custom Features Segment */}
-                {assets?.customFeatures && assets.customFeatures.length > 0 && (
-                  <div className="space-y-1.5 border-t border-slate-800/80 pt-2 text-left">
-                    <div className="text-[7.5px] uppercase font-black text-slate-400 tracking-wider">
-                      Uplinked Custom Poses
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {assets.customFeatures.map((feat) => (
-                        <button
-                          key={feat.id}
-                          onClick={() => {
-                            const bonuses = feat.statsBonus || {};
-                            handleAction(feat.id as PetState, bonuses, feat.name);
-                          }}
-                          className="flex flex-col items-center justify-center p-1.5 bg-slate-900/40 hover:bg-slate-800/60 border border-slate-850 rounded-lg text-indigo-200 hover:text-white transition-all cursor-pointer transform hover:scale-105"
-                        >
-                          <span className="text-xs">🎮</span>
-                          <span className="text-[7.5px] font-bold mt-1 truncate max-w-full" title={feat.name}>
-                            {feat.name}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
               {/* Hot-spot custom duration timer controller */}
@@ -686,32 +789,20 @@ export default function PetWidget({
               {feedDrawerOpen && (
                 <div className="w-full mt-2 border-t border-slate-800/60 pt-2 animate-fade-in">
                   <div className="text-[8px] font-black uppercase tracking-wider text-amber-400 mb-1 flex justify-between items-center px-1">
-                    <span>🐟 Treat Tray (Drag items to Cat or Click)</span>
-                    <span className="text-rose-400 font-bold scale-95 uppercase">Custom Food</span>
+                    <span>🐟 Treat Tray (Drag emoji to cat)</span>
+                    <span className="text-rose-400 font-bold scale-95 uppercase">Click to pick • Drag to feed</span>
                   </div>
+                  <p className="text-[8px] text-amber-200/90 text-center mb-1.5 font-bold">
+                    Tap a snack — menu closes so you can drag it onto the cat
+                  </p>
                   <div className="grid grid-cols-4 gap-1.5 w-full">
-                    {(assets.foods || DEFAULT_FOODS).map((food) => (
-                      <div
-                        key={food.id}
-                        draggable
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData('text/plain', food.id);
-                        }}
-                        onClick={() => handleFeed(food.id)}
-                        className="flex flex-col items-center justify-center p-1 bg-slate-900/40 hover:bg-slate-905/80 border border-slate-800 rounded-lg text-slate-200 cursor-grab active:cursor-grabbing hover:border-amber-400/60 transition-all text-center select-none group"
-                        title={`${food.name}: ${food.description} (Drag to cat or click!)`}
-                      >
-                        <span className="text-base group-hover:scale-110 transition-transform">{food.emoji}</span>
-                        <span className="text-[8px] font-bold text-slate-300 truncate w-full mt-0.5">{food.name}</span>
-                        <span className="text-[6px] text-slate-500 truncate w-full scale-90 mt-0.5 font-bold uppercase">Snack</span>
-                      </div>
-                    ))}
+                    {(assets.foods || DEFAULT_FOODS).map((food) => renderFoodDragItem(food))}
                   </div>
                 </div>
               )}
 
               <div className="text-[8px] text-slate-400 mt-2 text-center max-w-[85%] font-medium">
-                Affection Level: {Number(stats.love).toFixed(2)} XP • Click pet again to toggle view!
+                Click pet again to toggle view
               </div>
               <button
                 type="button"
@@ -746,24 +837,44 @@ export default function PetWidget({
               </div>
               <div className="w-full bg-slate-950/70 border border-slate-800 rounded-2xl p-3 space-y-3 text-center">
                 <label className="block text-[9px] font-black uppercase text-slate-400 tracking-wider">
-                  Focus minutes
+                  Focus duration
                 </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="240"
-                  value={focusMinutes}
-                  onChange={(e) => setFocusMinutes(Math.max(1, Math.min(240, parseInt(e.target.value) || 25)))}
-                  className="w-full text-center bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-2xl font-black text-indigo-300 font-mono"
-                />
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { label: 'hr', value: focusHours, setter: setFocusHours, max: 23 },
+                    { label: 'min', value: focusMinutes, setter: setFocusMinutes, max: 59 },
+                    { label: 'sec', value: focusSeconds, setter: setFocusSeconds, max: 59 },
+                  ].map((field) => (
+                    <label key={field.label} className="space-y-1">
+                      <input
+                        type="number"
+                        min="0"
+                        max={field.max}
+                        value={field.value}
+                        onChange={(e) => field.setter(Math.max(0, Math.min(field.max, parseInt(e.target.value) || 0)))}
+                        className="w-full text-center bg-slate-900 border border-slate-700 rounded-xl px-2 py-2 text-lg font-black text-indigo-300 font-mono"
+                      />
+                      <span className="block text-[8px] uppercase font-black text-slate-500">{field.label}</span>
+                    </label>
+                  ))}
+                </div>
                 <div className="grid grid-cols-4 gap-1.5">
-                  {[5, 15, 25, 50].map((minutes) => (
+                  {[
+                    { label: '5m', h: 0, m: 5, s: 0 },
+                    { label: '25m', h: 0, m: 25, s: 0 },
+                    { label: '1h', h: 1, m: 0, s: 0 },
+                    { label: '1h30', h: 1, m: 30, s: 0 },
+                  ].map((preset) => (
                     <button
-                      key={minutes}
-                      onClick={() => setFocusMinutes(minutes)}
+                      key={preset.label}
+                      onClick={() => {
+                        setFocusHours(preset.h);
+                        setFocusMinutes(preset.m);
+                        setFocusSeconds(preset.s);
+                      }}
                       className="py-1 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg text-[9px] font-bold text-slate-300 cursor-pointer"
                     >
-                      {minutes}m
+                      {preset.label}
                     </button>
                   ))}
                 </div>
@@ -797,9 +908,6 @@ export default function PetWidget({
             >
               <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                 <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400">Companion Stats HUD</span>
-                <span className="text-[9px] font-black bg-indigo-950 text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-800/40">
-                  LVL {Math.floor(Math.sqrt(stats.love / 15)) + 1}
-                </span>
               </div>
 
               <div className="space-y-2 text-[10px] font-bold">
@@ -807,21 +915,10 @@ export default function PetWidget({
                 <div className="space-y-1">
                   <div className="flex justify-between items-center text-emerald-300">
                     <span className="flex items-center gap-1">😊 Happiness</span>
-                    <span>{Number(stats.happiness).toFixed(2)}%</span>
+                    <span>{formatStatScore(stats.happiness)}/100</span>
                   </div>
                   <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
                     <div className="bg-emerald-400 h-full rounded-full" style={{ width: `${stats.happiness}%` }} />
-                  </div>
-                </div>
-
-                {/* Love Affection */}
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-rose-300">
-                    <span className="flex items-center gap-1">💖 Love / Affection</span>
-                    <span>{Number(stats.love).toFixed(2)} XP</span>
-                  </div>
-                  <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                    <div className="bg-rose-500 h-full rounded-full" style={{ width: `${Math.min(100, (stats.love / (Math.pow(Math.floor(Math.sqrt(stats.love / 15)) + 1, 2) * 15)) * 100)}%` }} />
                   </div>
                 </div>
 
@@ -829,21 +926,10 @@ export default function PetWidget({
                 <div className="space-y-1">
                   <div className="flex justify-between items-center text-amber-300">
                     <span className="flex items-center gap-1">⚡ Energy</span>
-                    <span>{Number(stats.energy).toFixed(2)}%</span>
+                    <span>{formatStatScore(stats.energy)}/100</span>
                   </div>
                   <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
                     <div className="bg-amber-400 h-full rounded-full" style={{ width: `${stats.energy}%` }} />
-                  </div>
-                </div>
-
-                {/* Hunger */}
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-sky-305 text-sky-300">
-                    <span className="flex items-center gap-1">🍕 Satiety (Fullness)</span>
-                    <span>{Number(100 - stats.hunger).toFixed(2)}%</span>
-                  </div>
-                  <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                    <div className="bg-sky-400 h-full rounded-full" style={{ width: `${100 - stats.hunger}%` }} />
                   </div>
                 </div>
 
@@ -851,7 +937,7 @@ export default function PetWidget({
                 <div className="space-y-1">
                   <div className="flex justify-between items-center text-indigo-300">
                     <span className="flex items-center gap-1">✨ Cleanliness</span>
-                    <span>{Number(stats.cleanliness).toFixed(2)}%</span>
+                    <span>{formatStatScore(stats.cleanliness)}/100</span>
                   </div>
                   <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
                     <div className="bg-indigo-400 h-full rounded-full" style={{ width: `${stats.cleanliness}%` }} />
@@ -889,8 +975,11 @@ export default function PetWidget({
           }}
           onDrop={(e) => {
             e.preventDefault();
+            e.stopPropagation();
             setIsDraggingOver(false);
-            const foodId = e.dataTransfer.getData('text/plain');
+            const foodId =
+              e.dataTransfer.getData('application/x-desktop-pet-food') ||
+              e.dataTransfer.getData('text/plain');
             if (foodId) {
               handleFeed(foodId);
             }
@@ -898,29 +987,45 @@ export default function PetWidget({
           className={`relative max-w-[90%] max-h-[90%] flex items-center justify-center p-1.5 cursor-pointer transform hover:scale-105 transition-transform duration-300 drop-shadow-[0_10px_15px_rgba(0,0,0,0.15)] bg-transparent active:scale-98 ${
             isDraggingOver ? 'ring-4 ring-amber-400/80 rounded-2xl ring-offset-2' : ''
           }`}
+          style={{ width: widgetSize * 0.78, height: widgetSize * 0.78 }}
         >
           {isDraggingOver && (
             <div className="absolute inset-0 bg-amber-500/25 rounded-2xl flex flex-col items-center justify-center animate-pulse z-30 pointer-events-none border-2 border-dashed border-amber-400">
               <span className="text-white text-[10px] font-black tracking-wider uppercase drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">YUM SNACK Dropped! 😋</span>
             </div>
           )}
+          {draggingFoodId && (
+            <div className="absolute -top-8 left-1/2 -translate-x-1/2 text-3xl pointer-events-none z-40 animate-bounce">
+              {(assets.foods || DEFAULT_FOODS).find((f) => f.id === draggingFoodId)?.emoji || '🍪'}
+            </div>
+          )}
           {asset.type === 'video' ? (
             <video
+              key={asset.url}
               src={asset.url}
               autoPlay
               loop
               muted
               playsInline
               referrerPolicy="no-referrer"
-              className="object-contain rounded-full shadow-inner bg-transparent"
-              style={{ width: widgetSize * 0.66, height: widgetSize * 0.66 }}
+              className="w-full h-full object-contain rounded-full shadow-inner bg-transparent"
+            />
+          ) : showCustomMedia ? (
+            <img
+              key={`${featKey}-${asset.url.slice(0, 48)}`}
+              src={asset.url}
+              alt={currentInteractState === 'laser' ? 'Laser play' : 'Pet'}
+              referrerPolicy="no-referrer"
+              onError={() => setCustomMediaError(true)}
+              className={`w-full h-full object-contain select-none bg-transparent ${
+                currentInteractState === 'dancing' ? 'animate-bounce' : ''
+              }`}
             />
           ) : (
             <TransparentCatImage
               src={asset.url}
-              alt="Floating fully interactive pet avatar look details"
-              style={{ width: widgetSize * 0.62, height: widgetSize * 0.62 }}
-              className={`object-contain select-none bg-transparent ${
+              alt="Pet companion"
+              className={`w-full h-full object-contain select-none bg-transparent ${
                 currentInteractState === 'dancing' ? 'animate-bounce' : ''
               }`}
             />
@@ -967,7 +1072,49 @@ export default function PetWidget({
             💡 Click me to play!
           </div>
         )}
+        {focusActive && (
+          <div className="absolute -bottom-7 left-1/2 -translate-x-1/2 bg-slate-950/85 text-indigo-200 border border-indigo-800/60 rounded-full px-3 py-1 text-[10px] font-black font-mono shadow-lg pointer-events-none">
+            {formatFocusTime(focusRemaining)}
+          </div>
+        )}
       </div>
+
+      {/* Treat dock below the cat — does not overlap the pet image */}
+      <AnimatePresence>
+        {compactFeedMode && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            className="electron-no-drag relative z-50 w-full max-w-[360px] mt-2 pointer-events-auto"
+          >
+            <div className="bg-slate-950/95 border border-amber-500/50 rounded-2xl shadow-2xl p-2 backdrop-blur-md">
+              <div className="flex items-center justify-between gap-2 mb-2 px-1">
+                <span className="text-[9px] font-black uppercase text-amber-300 tracking-wide">
+                  Drag snack up onto cat ↑
+                </span>
+                <button
+                  type="button"
+                  onClick={exitFeedDragMode}
+                  className="text-[8px] font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-2 py-0.5 rounded-full cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="flex flex-wrap justify-center gap-2">
+                {(assets.foods || DEFAULT_FOODS).map((food) => renderFoodDragItem(food, selectedFoodId === food.id))}
+              </div>
+              {selectedFoodId && (
+                <p className="text-[8px] text-center text-amber-200/80 mt-2 font-bold">
+                  Hold & drag{' '}
+                  {(assets.foods || DEFAULT_FOODS).find((f) => f.id === selectedFoodId)?.emoji || '🍪'}{' '}
+                  onto the cat above
+                </p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

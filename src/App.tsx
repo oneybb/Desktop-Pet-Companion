@@ -4,11 +4,18 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { PetState, PetStats, CustomAssets, WidgetCustomizer, UploadedFile, DesktopPetSeed } from './types';
+import { PetState, PetStats, CustomAssets, WidgetCustomizer, UploadedFile, DesktopPetSeed, CompanionSettings } from './types';
 import PetWidget from './components/PetWidget';
 import StatsAndActivities from './components/StatsAndActivities';
 import CustomizerPanel from './components/CustomizerPanel';
 import { DEFAULT_FOODS, getFoodAssetKey } from './defaults';
+import { sanitizeUploadedFileUrls, isOversizedAssetsCache } from './utils/mediaUrl';
+import {
+  loadCompanionSettings,
+  syncSnackInventory,
+  applyFocusSessionRewards,
+  FOCUS_REFERENCE_MINUTES,
+} from './utils/companionSettings';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Heart, 
@@ -51,7 +58,14 @@ export default function App() {
   const [assets, setAssets] = useState<CustomAssets>(() => {
     const saved = localStorage.getItem('desktop_pet_custom_assets');
     if (saved) {
-      try {
+      if (isOversizedAssetsCache(saved)) {
+        console.warn('Clearing oversized desktop_pet_custom_assets cache (media stays in IndexedDB).');
+        try {
+          localStorage.removeItem('desktop_pet_custom_assets');
+        } catch {
+          /* ignore */
+        }
+      } else try {
         const parsed = JSON.parse(saved);
         // Ensure standard keys exist
         if (parsed) {
@@ -59,19 +73,22 @@ export default function App() {
           if (!parsed.activeIndices) parsed.activeIndices = {};
           if (!parsed.playModes) {
             parsed.playModes = {};
-            const keys = ['idle', 'studying', 'shortBreak', 'rest', 'focusReward', 'eating', 'dancing', 'petting', 'licking'];
+            const keys = ['idle', 'studying', 'shortBreak', 'rest', 'focusReward', 'eating', 'dancing', 'petting', 'licking', 'laser'];
             keys.forEach(k => {
               parsed.playModes[k] = parsed.playMode || 'cycle';
             });
           }
           if (!parsed.uploadedAssets.shortBreak) parsed.uploadedAssets.shortBreak = [];
           if (!parsed.uploadedAssets.rest) parsed.uploadedAssets.rest = [];
+          if (!parsed.uploadedAssets.laser) parsed.uploadedAssets.laser = [];
           
           if (parsed.activeIndices.shortBreak === undefined) parsed.activeIndices.shortBreak = 0;
           if (parsed.activeIndices.rest === undefined) parsed.activeIndices.rest = 0;
+          if (parsed.activeIndices.laser === undefined) parsed.activeIndices.laser = 0;
 
           if (!parsed.playModes.shortBreak) parsed.playModes.shortBreak = 'cycle';
           if (!parsed.playModes.rest) parsed.playModes.rest = 'cycle';
+          if (!parsed.playModes.laser) parsed.playModes.laser = 'cycle';
 
           if (!parsed.customFeatures) parsed.customFeatures = [];
           if (!parsed.foods) parsed.foods = DEFAULT_FOODS;
@@ -80,6 +97,9 @@ export default function App() {
             if (!parsed.uploadedAssets[key]) parsed.uploadedAssets[key] = [];
             if (parsed.activeIndices[key] === undefined) parsed.activeIndices[key] = 0;
             if (!parsed.playModes[key]) parsed.playModes[key] = 'cycle';
+          });
+          Object.keys(parsed.uploadedAssets).forEach((key) => {
+            parsed.uploadedAssets[key] = sanitizeUploadedFileUrls(parsed.uploadedAssets[key] || []);
           });
           if (!parsed.workspacePaths) {
             parsed.workspacePaths = {
@@ -131,6 +151,7 @@ export default function App() {
         dancing: [],
         petting: [],
         licking: [],
+        laser: [],
         ...Object.fromEntries(DEFAULT_FOODS.map((food) => [getFoodAssetKey(food.id), []])),
       },
       activeIndices: {
@@ -143,6 +164,7 @@ export default function App() {
         dancing: 0,
         petting: 0,
         licking: 0,
+        laser: 0,
         ...Object.fromEntries(DEFAULT_FOODS.map((food) => [getFoodAssetKey(food.id), 0])),
       },
       playModes: {
@@ -155,6 +177,7 @@ export default function App() {
         dancing: 'cycle',
         petting: 'cycle',
         licking: 'cycle',
+        laser: 'cycle',
         ...Object.fromEntries(DEFAULT_FOODS.map((food) => [getFoodAssetKey(food.id), 'cycle' as const])),
       },
       customFeatures: [],
@@ -172,7 +195,7 @@ export default function App() {
         if (dbRecords.length > 0) {
           const loadedMap: Record<string, UploadedFile[]> = {};
           
-          dbRecords.forEach((rec) => {
+          for (const rec of dbRecords) {
             if (!loadedMap[rec.feature]) {
               loadedMap[rec.feature] = [];
             }
@@ -183,7 +206,7 @@ export default function App() {
               type: rec.type,
               name: rec.name,
             });
-          });
+          }
           
           setAssets((prev) => {
             const updatedUploaded = { ...prev.uploadedAssets };
@@ -229,6 +252,13 @@ export default function App() {
   const [isWidgetHovered, setIsWidgetHovered] = useState(false);
   const resetTimeoutRef = useRef<any>(null);
   const [showFocusRewardModal, setShowFocusRewardModal] = useState(false);
+  const [lastFocusRewards, setLastFocusRewards] = useState<{
+    statGains: { happiness: number; cleanliness: number; energy: number };
+    snacksGranted: Record<string, number>;
+    minutes: number;
+  } | null>(null);
+
+  const [companionSettings, setCompanionSettings] = useState<CompanionSettings>(() => loadCompanionSettings());
 
   // Shared Customize Durations (in seconds)
   const [customDuration, setCustomDuration] = useState<number>(() => {
@@ -274,57 +304,94 @@ export default function App() {
   }, [stats]);
 
   useEffect(() => {
-    localStorage.setItem('desktop_pet_custom_assets', JSON.stringify(assets));
+    try {
+      const assetsForStorage = {
+        ...assets,
+        uploadedAssets: Object.fromEntries(
+          Object.entries(assets.uploadedAssets).map(([key, files]) => [
+            key,
+            sanitizeUploadedFileUrls(files),
+          ])
+        ),
+      };
+      localStorage.setItem('desktop_pet_custom_assets', JSON.stringify(assetsForStorage));
+    } catch (err) {
+      console.warn('Could not save assets to localStorage (quota or size):', err);
+    }
   }, [assets]);
 
   useEffect(() => {
     localStorage.setItem('desktop_pet_widget_customizer', JSON.stringify(customizer));
   }, [customizer]);
 
-  // STATS DECAY LOGIC - 5% per hour (approx. 5 points per hour)
   useEffect(() => {
+    localStorage.setItem('desktop_pet_companion_settings', JSON.stringify(companionSettings));
+  }, [companionSettings]);
+
+  // Keep snack inventory in sync when foods are added/removed
+  useEffect(() => {
+    setCompanionSettings((prev) => ({
+      ...prev,
+      snackInventory: syncSnackInventory(
+        prev.snackInventory,
+        assets.foods || DEFAULT_FOODS,
+        prev.initialSnackCounts
+      ),
+    }));
+  }, [assets.foods]);
+
+  // STATS DECAY LOGIC — hourly rates from companion settings
+  useEffect(() => {
+    const rates = companionSettings.decayPerHour;
     const now = Date.now();
     const savedLastDecay = localStorage.getItem('desktop_pet_last_decay_time');
-    
+
+    const applyDecay = (hours: number) => {
+      if (hours <= 0) return;
+      setStats((prev) => ({
+        ...prev,
+        happiness: Math.max(0, prev.happiness - rates.happiness * hours),
+        hunger: Math.min(100, prev.hunger + rates.hunger * hours),
+        energy: Math.max(0, prev.energy - rates.energy * hours),
+        cleanliness: Math.max(0, prev.cleanliness - rates.cleanliness * hours),
+      }));
+    };
+
     if (savedLastDecay) {
       const elapsedSecs = (now - Number(savedLastDecay)) / 1000;
       if (elapsedSecs > 0) {
-        // Limit retroactive offline decay to 24 hours to protect the pet's levels
         const capSecs = Math.min(24 * 3600, elapsedSecs);
-        const decayPoints = (capSecs / 3600) * 5;
-        if (decayPoints > 0) {
-          setStats((prev) => ({
-            ...prev,
-            happiness: Math.max(0, prev.happiness - decayPoints),
-            hunger: Math.min(100, prev.hunger + decayPoints), // hunger increases over time
-            energy: Math.max(0, prev.energy - decayPoints),
-            cleanliness: Math.max(0, prev.cleanliness - decayPoints),
-          }));
-        }
+        applyDecay(capSecs / 3600);
       }
     }
     localStorage.setItem('desktop_pet_last_decay_time', String(now));
 
-    // Continuous 30-sec active decay ticks for robust real-time tracking
     let lastTickTime = Date.now();
     const tickInterval = setInterval(() => {
       const currentTick = Date.now();
       const deltaSecs = (currentTick - lastTickTime) / 1000;
       lastTickTime = currentTick;
       localStorage.setItem('desktop_pet_last_decay_time', String(currentTick));
-
-      const tickDecay = (deltaSecs / 3600) * 5;
-      setStats((prev) => ({
-        ...prev,
-        happiness: Math.max(0, prev.happiness - tickDecay),
-        hunger: Math.min(100, prev.hunger + tickDecay),
-        energy: Math.max(0, prev.energy - tickDecay),
-        cleanliness: Math.max(0, prev.cleanliness - tickDecay),
-      }));
+      applyDecay(deltaSecs / 3600);
     }, 30000);
 
     return () => clearInterval(tickInterval);
-  }, []);
+  }, [
+    companionSettings.decayPerHour.happiness,
+    companionSettings.decayPerHour.hunger,
+    companionSettings.decayPerHour.energy,
+    companionSettings.decayPerHour.cleanliness,
+  ]);
+
+  const handleFoodAdded = (foodId: string) => {
+    setCompanionSettings((prev) => ({
+      ...prev,
+      snackInventory: {
+        ...prev.snackInventory,
+        [foodId]: prev.snackInventory[foodId] ?? prev.initialSnackCounts[foodId] ?? 1,
+      },
+    }));
+  };
 
   // Set transient pet states with helper reset timers
   const triggerInteractState = (state: PetState, durationMs: number = 3000) => {
@@ -332,7 +399,9 @@ export default function App() {
     const list = assets.uploadedAssets[state] || [];
     const mode = assets.playModes[state] || 'cycle';
     
-    if (list.length > 0) {
+    const isFoodState = String(state).startsWith('food:');
+
+    if (list.length > 0 && !isFoodState) {
       setAssets((prev) => {
         const indices = prev.activeIndices || {};
         const currentIdx = indices[state] ?? 0;
@@ -380,19 +449,16 @@ export default function App() {
     }));
   };
 
-  // Timer Focus Completed handler
   const handleFocusCompleted = (minutes: number) => {
-    setStats((prev) => ({
-      ...prev,
-      focusMinutes: prev.focusMinutes + minutes,
-      completedSessions: prev.completedSessions + 1,
-      love: prev.love + 50, // major award!
-      happiness: Math.min(100, prev.happiness + 35),
-      energy: Math.max(10, prev.energy - 20), // studying drains physical energy
-    }));
-    
+    const rewards = applyFocusSessionRewards(
+      minutes,
+      companionSettings,
+      setStats,
+      setCompanionSettings
+    );
+    setLastFocusRewards({ ...rewards, minutes });
     setShowFocusRewardModal(true);
-    triggerInteractState('focusReward', 10000); // Trigger Focus celebration pose for 10 seconds
+    triggerInteractState('focusReward', 10000);
   };
 
   const handleResetStats = () => {
@@ -499,6 +565,16 @@ export default function App() {
             customDuration={customDuration}
             setCustomDuration={setCustomDuration}
             onFocusComplete={handleFocusCompleted}
+            snackInventory={companionSettings.snackInventory}
+            onConsumeSnack={(foodId) => {
+              const count = companionSettings.snackInventory[foodId] ?? 0;
+              if (count < 1) return false;
+              setCompanionSettings((prev) => ({
+                ...prev,
+                snackInventory: { ...prev.snackInventory, [foodId]: count - 1 },
+              }));
+              return true;
+            }}
           />
 
           {/* Hidden Double-click instructional overlay hint - fades out very cleanly */}
@@ -538,6 +614,16 @@ export default function App() {
                   customDuration={customDuration}
                   setCustomDuration={setCustomDuration}
                   onFocusComplete={handleFocusCompleted}
+                  snackInventory={companionSettings.snackInventory}
+                  onConsumeSnack={(foodId) => {
+                    const count = companionSettings.snackInventory[foodId] ?? 0;
+                    if (count < 1) return false;
+                    setCompanionSettings((prev) => ({
+                      ...prev,
+                      snackInventory: { ...prev.snackInventory, [foodId]: count - 1 },
+                    }));
+                    return true;
+                  }}
                 />
               </div>
 
@@ -565,6 +651,7 @@ export default function App() {
                   onResetStats={handleResetStats}
                   customDuration={customDuration}
                   setCustomDuration={setCustomDuration}
+                  onFoodAdded={handleFoodAdded}
                 />
               )}
             </div>
@@ -581,6 +668,8 @@ export default function App() {
                 assets={assets}
                 customDuration={customDuration}
                 setCustomDuration={setCustomDuration}
+                companionSettings={companionSettings}
+                setCompanionSettings={setCompanionSettings}
               />
             </div>
           </>
@@ -665,16 +754,42 @@ export default function App() {
                 })()}
               </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs font-bold pt-1">
-                <div className="p-2.5 bg-rose-50 border border-rose-100 rounded-xl text-rose-700 flex flex-col justify-center items-center">
-                  <span className="text-[9px] text-rose-500 uppercase font-black tracking-wider">Affection Gain</span>
-                  <span className="text-sm font-extrabold">+50 Love XP 💖</span>
-                </div>
+              <div className="grid grid-cols-3 gap-2 text-xs font-bold pt-1">
                 <div className="p-2.5 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-750 flex flex-col justify-center items-center">
-                  <span className="text-[9px] text-emerald-500 uppercase font-black tracking-wider">Happiness Bonus</span>
-                  <span className="text-sm font-extrabold">+35 Happiness 😊</span>
+                  <span className="text-[9px] text-emerald-500 uppercase font-black tracking-wider">Happiness</span>
+                  <span className="text-sm font-extrabold">
+                    +{lastFocusRewards?.statGains.happiness ?? companionSettings.focusRewardPer25Min.happiness} score
+                  </span>
+                </div>
+                <div className="p-2.5 bg-amber-50 border border-amber-100 rounded-xl text-amber-700 flex flex-col justify-center items-center">
+                  <span className="text-[9px] text-amber-500 uppercase font-black tracking-wider">Energy</span>
+                  <span className="text-sm font-extrabold">
+                    +{lastFocusRewards?.statGains.energy ?? companionSettings.focusRewardPer25Min.energy} score
+                  </span>
+                </div>
+                <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-700 flex flex-col justify-center items-center">
+                  <span className="text-[9px] text-indigo-500 uppercase font-black tracking-wider">Clean</span>
+                  <span className="text-sm font-extrabold">
+                    +{lastFocusRewards?.statGains.cleanliness ?? companionSettings.focusRewardPer25Min.cleanliness} score
+                  </span>
                 </div>
               </div>
+              {lastFocusRewards && Object.keys(lastFocusRewards.snacksGranted).length > 0 && (
+                <div className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-2">
+                  Snacks added to inventory:{' '}
+                  {Object.entries(lastFocusRewards.snacksGranted)
+                    .map(([id, n]) => {
+                      const food = (assets.foods || DEFAULT_FOODS).find((f) => f.id === id);
+                      return `${food?.emoji || '🍪'} ×${n}`;
+                    })
+                    .join(', ')}
+                </div>
+              )}
+              {lastFocusRewards && (
+                <p className="text-[9px] text-slate-400 font-mono">
+                  Scaled from {lastFocusRewards.minutes}m session (base: {FOCUS_REFERENCE_MINUTES}m)
+                </p>
+              )}
 
               <button
                 onClick={() => setShowFocusRewardModal(false)}

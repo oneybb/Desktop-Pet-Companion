@@ -11,15 +11,21 @@ export default function TransparentCatImage({ src, alt, className, style }: Tran
   const [processedSrc, setProcessedSrc] = useState<string>(src);
 
   useEffect(() => {
-    // If the image is a data URL already, or if loading fails, we will fall back safely.
-    // Ensure we handle non-image files or pre-processed files
-    if (!src || src.startsWith('data:image')) {
+    // User uploads (blob/data/http) must render as-is — canvas processing breaks blob URLs.
+    const skipProcessing =
+      !src ||
+      src.startsWith('blob:') ||
+      src.startsWith('data:') ||
+      src.startsWith('http://') ||
+      src.startsWith('https://') ||
+      src.startsWith('./');
+
+    if (skipProcessing) {
       setProcessedSrc(src);
       return;
     }
 
     const img = new Image();
-    img.crossOrigin = "anonymous";
     img.src = src;
     img.onload = () => {
       const canvas = document.createElement('canvas');
