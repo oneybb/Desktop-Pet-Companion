@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   CustomAssets,
   WidgetCustomizer,
@@ -19,9 +19,13 @@ import {
   ACTIVITY_STAT_FIELDS,
   clampActivityStat,
   normalizeStatBonus,
+  durationToSecondsAllowZero,
+  secondsToHms,
+  formatDurationSeconds,
   FOCUS_REFERENCE_MINUTES,
 } from '../utils/companionSettings';
 import { getFoodAssetKey } from '../defaults';
+import { BUILTIN_INTERACTIONS, BUILTIN_FEATURE_UI } from '../featureCatalog';
 import { 
   Upload, 
   Monitor, 
@@ -50,14 +54,6 @@ interface CustomizerPanelProps {
   setCompanionSettings: React.Dispatch<React.SetStateAction<CompanionSettings>>;
 }
 
-const BUILTIN_FEATURE_SPECS: { id: keyof ActivityRewards; name: string; emoji: string; hint: string }[] = [
-  { id: 'petting', name: 'Pet Cat', emoji: '❤️', hint: 'Applied each time you pet' },
-  { id: 'licking', name: 'Groom Fur', emoji: '✨', hint: 'Applied each grooming action' },
-  { id: 'dancing', name: 'Dance Beats', emoji: '🎵', hint: 'Applied when dance starts' },
-  { id: 'laser', name: 'Laser Chase', emoji: '🔴', hint: 'Applied when laser mode turns on' },
-  { id: 'sleep', name: 'Sleep / Nap', emoji: '😴', hint: 'Applied once when nap starts' },
-];
-
 export default function CustomizerPanel({
   customizer,
   setCustomizer,
@@ -75,6 +71,10 @@ export default function CustomizerPanel({
   const [copiedName, setCopiedName] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string>('');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [downloadFileName, setDownloadFileName] = useState<string | null>(null);
+  const [installHint, setInstallHint] = useState<string | null>(null);
+  const [exportTarget, setExportTarget] = useState<'auto' | 'win32' | 'darwin'>('auto');
+  const [isDownloading, setIsDownloading] = useState(false);
   const [newFoodName, setNewFoodName] = useState('');
   const [newFoodEmoji, setNewFoodEmoji] = useState('🍪');
   const [newFoodDescription, setNewFoodDescription] = useState('');
@@ -89,7 +89,33 @@ export default function CustomizerPanel({
   const [bonusEnergy, setBonusEnergy] = useState(-5);
   const [bonusClean, setBonusClean] = useState(0);
 
-  const { petName, activityRewards, decayPerHour, focusRewardPer25Min } = companionSettings;
+  const { petName, activityRewards, decayPerHour, focusRewardPer25Min, poseMediaSlideshowSeconds } =
+    companionSettings;
+  const slideshowHms = secondsToHms(poseMediaSlideshowSeconds);
+  const [slideHours, setSlideHours] = useState(slideshowHms.hours);
+  const [slideMinutes, setSlideMinutes] = useState(slideshowHms.minutes);
+  const [slideSeconds, setSlideSeconds] = useState(slideshowHms.seconds);
+
+  const applySlideshowInterval = (h: number, m: number, s: number) => {
+    setCompanionSettings((prev) => ({
+      ...prev,
+      poseMediaSlideshowSeconds: durationToSecondsAllowZero(h, m, s),
+    }));
+  };
+
+  const updateSlideshowFromInputs = (h: number, m: number, s: number) => {
+    setSlideHours(h);
+    setSlideMinutes(m);
+    setSlideSeconds(s);
+    applySlideshowInterval(h, m, s);
+  };
+
+  useEffect(() => {
+    const hms = secondsToHms(poseMediaSlideshowSeconds);
+    setSlideHours(hms.hours);
+    setSlideMinutes(hms.minutes);
+    setSlideSeconds(hms.seconds);
+  }, [poseMediaSlideshowSeconds]);
 
   const updatePetName = (name: string) => {
     setCompanionSettings((prev) => ({
@@ -402,8 +428,53 @@ export default function CustomizerPanel({
     });
   };
 
+  const handleDownloadBuiltApp = async () => {
+    if (!downloadUrl || !downloadFileName) return;
+
+    setIsDownloading(true);
+    setExportStatus(`Downloading ${downloadFileName}...`);
+
+    try {
+      const response = await fetch(downloadUrl);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error((err as { error?: string })?.error || 'Download failed.');
+      }
+
+      const expectedLength = response.headers.get('Content-Length');
+      const blob = await response.blob();
+
+      if (expectedLength) {
+        const expected = Number.parseInt(expectedLength, 10);
+        if (Number.isFinite(expected) && blob.size !== expected) {
+          throw new Error(
+            `Download incomplete (${Math.round(blob.size / 1024 / 1024)} MB of ${Math.round(expected / 1024 / 1024)} MB). Rebuild and try again.`,
+          );
+        }
+      }
+
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = downloadFileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+
+      setExportStatus(`Saved ${downloadFileName} (${Math.round(blob.size / 1024 / 1024)} MB).`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Download failed.';
+      setExportStatus(`Download failed: ${message}`);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   const handleExportDesktopApp = async () => {
     setDownloadUrl(null);
+    setDownloadFileName(null);
+    setInstallHint(null);
     setExportStatus('Collecting uploaded images and settings...');
 
     try {
@@ -430,7 +501,9 @@ export default function CustomizerPanel({
           customizer,
           customDuration,
           assets,
+          companionSettings,
           files,
+          buildFor: exportTarget,
         }),
       });
 
@@ -440,51 +513,39 @@ export default function CustomizerPanel({
       }
 
       setDownloadUrl(`http://localhost:5174${result.downloadUrl}`);
-      setExportStatus(`Done. Built ${result.fileName}.`);
+      setDownloadFileName(result.fileName);
+      setInstallHint(result.installHint ?? null);
+      const sizeMb = result.fileSize ? Math.round(result.fileSize / 1024 / 1024) : null;
+      setExportStatus(
+        sizeMb
+          ? `Done. Built ${result.fileName} (${sizeMb} MB). Use the download button below — wait until it finishes.`
+          : `Done. Built ${result.fileName}. Use the download button below.`,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown export error.';
       setExportStatus(`Export failed: ${message}`);
     }
   };
 
-  const workspaceFileSpecs = [
-    { name: 'pet_idle.png', desc: 'Default standing/idle picture of your pet' },
-    { name: 'pet_studying.png', desc: 'Picture displayed during active focus timer' },
-    { name: 'pet_short_break.png', desc: 'Picture displayed during shorter break periods' },
-    { name: 'pet_rest.png', desc: 'Picture displayed during rest/longer breaks' },
-    { name: 'pet_celebrate.png', desc: 'Celebratory picture displayed when focus session completes' },
-    { name: 'pet_eating.png', desc: 'Picture of pet eating or chewing treats' },
-    { name: 'pet_dancing.png', desc: 'Picture of pet listening to beats/waving' },
-    { name: 'pet_petted.mp4', desc: 'Video played when you pet your virtual companion' },
-    { name: 'pet_fur.mp4', desc: 'Video played when you groom or lick its fur' },
-    { name: 'pet_feed.mp4', desc: 'Video played during eating/meal sessions' },
-    { name: 'pet_dance.mp4', desc: 'Video played when your pet breaks into a dance' },
-    { name: 'pet_laser.png', desc: 'Picture shown during laser chase play mode' },
-  ];
+  const workspaceFileSpecs = BUILTIN_INTERACTIONS.map((f) => ({
+    name: f.workspaceFile,
+    desc: f.workspaceDesc,
+  }));
 
-  const uploadInputsSpec = [
-    { key: 'idle', label: 'Idle / resting pose' },
-    { key: 'studying', label: 'During Focus / study pose' },
-    { key: 'sleep', label: 'Sleep / nap pose' },
-    { key: 'shortBreak', label: 'Focus Short Break pose' },
-    { key: 'rest', label: 'Focus REST/Long Break pose' },
-    { key: 'focusReward', label: 'Finish Focus reward celebrate' },
-    { key: 'eating', label: 'Eating / chew action' },
-    { key: 'dancing', label: 'Dancing / grooves' },
-    { key: 'petting', label: 'Petting interactions' },
-    { key: 'licking', label: 'Grooming / fur licks' },
-    { key: 'laser', label: 'Laser play pose' },
-  ];
+  const uploadInputsSpec = BUILTIN_INTERACTIONS.map((f) => ({
+    key: f.id,
+    label: f.label,
+  }));
 
   const dynamicSpecs = (assets.customFeatures || []).map((feat) => ({
     key: feat.id,
-    label: `${feat.name} (Custom feature)`,
-    isCustom: true
+    label: feat.name,
+    isCustom: true as const,
   }));
 
   const foodSpecs = (assets.foods || []).map((food) => ({
     key: getFoodAssetKey(food.id),
-    label: `${food.emoji} ${food.name} (Feed media)`,
+    label: `${food.emoji} ${food.name}`,
   }));
 
   const allSpecs = [...uploadInputsSpec, ...foodSpecs, ...dynamicSpecs];
@@ -570,7 +631,7 @@ export default function CustomizerPanel({
             </p>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              {BUILTIN_FEATURE_SPECS.map((spec) => (
+              {BUILTIN_FEATURE_UI.map((spec) => (
                 <div
                   key={spec.id}
                   className="bg-gradient-to-br from-white to-slate-50 border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3"
@@ -628,7 +689,7 @@ export default function CustomizerPanel({
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 border-t border-slate-200 pt-5">
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
                 <h3 className="font-black text-slate-700 text-xs uppercase tracking-wider">
-                  Focus timer reward / {FOCUS_REFERENCE_MINUTES}m
+                  Study reward / {FOCUS_REFERENCE_MINUTES}m
                 </h3>
                 <p className="text-[10px] text-slate-500">Scales with session length. Supports +/−.</p>
                 {(['happiness', 'energy', 'cleanliness'] as const).map((key) => (
@@ -826,8 +887,8 @@ export default function CustomizerPanel({
             <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2.5">
               <div className="flex justify-between items-center">
                 <div>
-                  <h4 className="font-extrabold text-slate-800 text-xs">⏱️ Custom Interaction Pose Duration</h4>
-                  <p className="text-[10px] text-slate-500">How many seconds your pet wiggles, eats, or dances before returning to idle/laser.</p>
+                  <h4 className="font-extrabold text-slate-800 text-xs">⏱️ Pose duration</h4>
+                  <p className="text-[10px] text-slate-500">Seconds for pet, groom, eat, dance, etc. before returning to idle.</p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <input
@@ -874,6 +935,70 @@ export default function CustomizerPanel({
               </div>
             </div>
 
+            <div className="bg-violet-50/80 border border-violet-200 rounded-xl p-3.5 space-y-2.5">
+              <div>
+                <h4 className="font-extrabold text-violet-900 text-xs">🖼️ Pose media slideshow</h4>
+                <p className="text-[10px] text-violet-800/90 mt-0.5">
+                  Auto-rotate through uploaded images for idle, study, groom, eat, sleep, and other poses (2+ uploads per pose).
+                  Study timer keeps the pose until the timer ends. Set all to 0 to disable.
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { label: 'hr', value: slideHours, setter: setSlideHours },
+                  { label: 'min', value: slideMinutes, setter: setSlideMinutes },
+                  { label: 'sec', value: slideSeconds, setter: setSlideSeconds },
+                ].map((field) => (
+                  <label key={field.label} className="text-center space-y-1">
+                    <input
+                      type="number"
+                      min={0}
+                      max={field.label === 'hr' ? 23 : 59}
+                      value={field.value}
+                      onChange={(e) => {
+                        const max = field.label === 'hr' ? 23 : 59;
+                        const v = Math.max(0, Math.min(max, parseInt(e.target.value) || 0));
+                        updateSlideshowFromInputs(
+                          field.label === 'hr' ? v : slideHours,
+                          field.label === 'min' ? v : slideMinutes,
+                          field.label === 'sec' ? v : slideSeconds
+                        );
+                      }}
+                      className="w-full text-center bg-white border border-violet-300 rounded-lg px-2 py-2 text-sm font-black text-violet-800 font-mono"
+                    />
+                    <span className="text-[9px] font-bold text-violet-600 uppercase">{field.label}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { label: 'Off', h: 0, m: 0, s: 0 },
+                  { label: '2s', h: 0, m: 0, s: 2 },
+                  { label: '5s', h: 0, m: 0, s: 5 },
+                  { label: '30s', h: 0, m: 0, s: 30 },
+                  { label: '1m', h: 0, m: 1, s: 0 },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => updateSlideshowFromInputs(preset.h, preset.m, preset.s)}
+                    className={`px-2 py-1 text-[9px] font-bold rounded-md border cursor-pointer ${
+                      poseMediaSlideshowSeconds === preset.h * 3600 + preset.m * 60 + preset.s
+                        ? 'bg-violet-600 text-white border-violet-600'
+                        : 'bg-white text-violet-700 border-violet-200 hover:bg-violet-100'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] font-mono font-bold text-violet-700">
+                {poseMediaSlideshowSeconds > 0
+                  ? `Active: next image every ${formatDurationSeconds(poseMediaSlideshowSeconds)}`
+                  : 'Slideshow off — images advance only when you trigger the action again'}
+              </p>
+            </div>
+
             {assets.useWorkspace ? (
               <div className="space-y-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                 <div className="flex items-center gap-2 text-indigo-600 font-bold text-xs">
@@ -905,7 +1030,7 @@ export default function CustomizerPanel({
                 {/* 1. BUILD DYNAMIC NEW FEATURES FORM */}
                 <div className="bg-indigo-50/50 border border-indigo-150 rounded-xl p-3.5 space-y-3">
                   <div className="flex justify-between items-center">
-                    <h4 className="font-black text-indigo-900 text-xs uppercase tracking-wider">🛠️ Add New Custom Interaction Pose</h4>
+                    <h4 className="font-black text-indigo-900 text-xs uppercase tracking-wider">🛠️ Add custom action</h4>
                     <span className="text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold">Dynamic Generator</span>
                   </div>
                   <form onSubmit={handleAddCustomFeature} className="space-y-2 text-slate-700">
@@ -1239,6 +1364,21 @@ export default function CustomizerPanel({
               <p className="text-slate-600 leading-relaxed text-[11px]">
                 Bundles your current uploaded images, play modes, stats, and visual settings into an Electron desktop widget app. Keep the local export server running with <code className="bg-white px-1 py-0.5 rounded font-mono">npm run dev:export</code>.
               </p>
+              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wide">
+                Build installer for
+              </label>
+              <select
+                value={exportTarget}
+                onChange={(e) => setExportTarget(e.target.value as 'auto' | 'win32' | 'darwin')}
+                className="w-full rounded-lg border border-indigo-200 bg-white px-2 py-1.5 text-[11px] text-slate-800"
+              >
+                <option value="auto">This computer (recommended)</option>
+                <option value="win32">Windows 64-bit (.exe)</option>
+                <option value="darwin">macOS Apple Silicon (.dmg)</option>
+              </select>
+              <p className="text-[10px] text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-2 leading-relaxed">
+                Windows users need a file ending in <strong>Portable.exe</strong> or <strong>Setup.exe</strong> — not a Mac .dmg or .zip. If the installer says integrity check failed, the download was incomplete: rebuild, download again, and wait for the full file size shown above.
+              </p>
               <button
                 type="button"
                 onClick={handleExportDesktopApp}
@@ -1251,13 +1391,20 @@ export default function CustomizerPanel({
                   {exportStatus}
                 </div>
               )}
-              {downloadUrl && (
-                <a
-                  href={downloadUrl}
-                  className="block w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-xl shadow-md transition-all text-center text-xs uppercase"
+              {downloadUrl && downloadFileName && (
+                <button
+                  type="button"
+                  onClick={handleDownloadBuiltApp}
+                  disabled={isDownloading}
+                  className="block w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-extrabold rounded-xl shadow-md transition-all text-center text-xs uppercase cursor-pointer"
                 >
-                  Download Built App
-                </a>
+                  {isDownloading ? 'Downloading…' : `Download ${downloadFileName}`}
+                </button>
+              )}
+              {installHint && (
+                <p className="text-[10px] text-emerald-900 bg-emerald-50 border border-emerald-100 rounded-lg p-2 leading-relaxed">
+                  {installHint}
+                </p>
               )}
             </div>
 
@@ -1267,7 +1414,10 @@ export default function CustomizerPanel({
                 DESKTOP APP NOTES
               </h4>
               <p className="text-slate-600 leading-relaxed text-[11px]">
-                The export builds for the computer running this project. On macOS it creates Mac artifacts; on Windows it creates Windows artifacts. Cross-building Windows from macOS can require extra tools.
+                Choose <strong>Windows 64-bit</strong> when sharing with a PC. Building Windows installers on a Mac may fail — if so, clone the repo on a Windows machine and run <code className="bg-white px-1 py-0.5 rounded font-mono">npm run dev:export</code> there, or <code className="bg-white px-1 py-0.5 rounded font-mono">npm run desktop:dist:win</code>.
+              </p>
+              <p className="text-slate-600 leading-relaxed text-[11px]">
+                On Windows, run <strong>DesktopPetCompanion-*-Portable.exe</strong> for a single-file app, or <strong>*-Setup.exe</strong> to install. Do not unzip a Mac build or run partial downloads — that causes “searching for Desktop Pet Companion.exe” and NSIS integrity errors.
               </p>
             </div>
 

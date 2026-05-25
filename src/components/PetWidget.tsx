@@ -29,6 +29,8 @@ import petStudyImg from '../assets/images/cat_tabby_study_1779630212670.png';
 import petDanceImg from '../assets/images/cat_tabby_dance_1779630251008.png';
 import petEatImg from '../assets/images/cat_tabby_eat_1779630231804.png';
 import TransparentCatImage from './TransparentCatImage';
+import StatChangeFlash from './StatChangeFlash';
+import { useStatFlash } from '../hooks/useStatFlash';
 import { isDisplayableMediaUrl } from '../utils/mediaUrl';
 import { formatStatScore, formatDurationSeconds, durationToSeconds, applyActivityStatBonus } from '../utils/companionSettings';
 
@@ -45,7 +47,6 @@ interface PetWidgetProps {
   setStats: React.Dispatch<React.SetStateAction<PetStats>>;
   compactMode?: boolean;
   customDuration?: number;
-  setCustomDuration?: (val: number) => void;
   onFocusComplete?: (minutes: number) => void;
   sleepActive?: boolean;
   sleepRemaining?: number;
@@ -55,6 +56,7 @@ interface PetWidgetProps {
   idleResetKey?: number;
   activityRewards?: ActivityRewards;
   petName?: string;
+  poseMediaSlideshowSeconds?: number;
   snackInventory?: Record<string, number>;
   onConsumeSnack?: (foodId: string) => boolean;
 }
@@ -72,7 +74,6 @@ export default function PetWidget({
   setStats,
   compactMode = false,
   customDuration = 5,
-  setCustomDuration,
   onFocusComplete,
   sleepActive = false,
   sleepRemaining = 0,
@@ -82,6 +83,7 @@ export default function PetWidget({
   idleResetKey = 0,
   activityRewards,
   petName = 'Tabby',
+  poseMediaSlideshowSeconds = 0,
   snackInventory = {},
   onConsumeSnack,
 }: PetWidgetProps) {
@@ -125,22 +127,20 @@ export default function PetWidget({
     return { width: 340, height: 420 };
   });
 
-  const getPopupBgStyle = () => {
-    switch (customizer.theme) {
-      case 'retro-win98':
-        return 'bg-[#c0c0c0] border-2 border-t-white border-l-white border-b-slate-850 border-r-slate-850 text-slate-950 rounded-2xl shadow-2xl';
-      case 'dark':
-        return 'bg-slate-900/95 border border-slate-800 text-white rounded-2xl shadow-2xl';
-      case 'glass':
-        return 'bg-white/35 backdrop-blur-md border border-white/40 text-indigo-950 rounded-2xl shadow-2xl';
-      case 'pastel':
-      default:
-        return 'bg-rose-50/95 border border-rose-100 text-slate-850 rounded-2xl shadow-2xl';
-    }
-  };
+  const interactionShellClass =
+    'electron-no-drag absolute z-40 flex flex-col overflow-hidden rounded-[2rem] shadow-[0_24px_60px_rgba(76,29,149,0.45)] ring-1 ring-white/15 bg-gradient-to-br from-violet-950/98 via-slate-900/97 to-indigo-950/98 backdrop-blur-xl text-slate-100';
+
+  const statsPanelWidth = Math.min(200, Math.max(118, Math.round(widgetSize * 0.56)));
+  const statsBarHeight = Math.max(4, Math.round(widgetSize * 0.012));
+
+  const actionTileClass = (tone: string) =>
+    `flex flex-col items-center justify-center gap-0.5 min-h-[48px] rounded-2xl border transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none hover:brightness-110 active:scale-[0.97] ${tone}`;
 
   // Hover state for showing stats HUD overlay
   const [isHovered, setIsHovered] = useState(false);
+  const [showWidgetChrome, setShowWidgetChrome] = useState(false);
+  const [isWidgetResizing, setIsWidgetResizing] = useState(false);
+  const widgetChromeVisible = showWidgetChrome || isWidgetResizing;
 
   // Laser Chase States
   const [laserPos, setLaserPos] = useState<{ x: number; y: number } | null>(null);
@@ -152,6 +152,7 @@ export default function PetWidget({
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetResizeRef = useRef<{ startX: number; startSize: number } | null>(null);
   const interactionResizeRef = useRef<{ startX: number; startY: number; width: number; height: number } | null>(null);
+  const statFlash = useStatFlash(stats);
 
   useEffect(() => {
     setCustomMediaError(false);
@@ -207,9 +208,6 @@ export default function PetWidget({
 
       if (currentInteractState === 'studying') {
         return { type: 'image', url: assets.workspacePaths.studying || petStudyImg, fromUpload: false };
-      }
-      if (currentInteractState === 'shortBreak') {
-        return { type: 'image', url: assets.workspacePaths.shortBreak || petDanceImg, fromUpload: false };
       }
       if (currentInteractState === 'sleep' || currentInteractState === 'rest') {
         const sleepUploaded = resolveUploaded('sleep');
@@ -347,6 +345,9 @@ export default function PetWidget({
           clearInterval(focusTimerRef.current);
           setFocusActive(false);
           setShowFocusSetup(false);
+          if (!sleepActive) {
+            setInteractState('idle');
+          }
           onFocusComplete?.(Math.max(1, Math.ceil((focusHours * 3600 + focusMinutes * 60 + focusSeconds) / 60)));
           return 0;
         }
@@ -530,6 +531,7 @@ export default function PetWidget({
     event.preventDefault();
     event.stopPropagation();
     widgetResizeRef.current = { startX: event.clientX, startSize: widgetSize };
+    setIsWidgetResizing(true);
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       if (!widgetResizeRef.current) return;
@@ -539,6 +541,7 @@ export default function PetWidget({
 
     const onPointerUp = () => {
       widgetResizeRef.current = null;
+      setIsWidgetResizing(false);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
     };
@@ -611,7 +614,7 @@ export default function PetWidget({
   };
 
   return (
-    <div className="flex flex-col items-center justify-center p-1 relative select-none">
+    <div className="flex flex-col items-center justify-center p-1 relative select-none overflow-visible">
       
       {/* Floating status bubble indicating state */}
       {!compactMode && (
@@ -626,13 +629,14 @@ export default function PetWidget({
             >
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
               {currentInteractState === 'idle' && `${petName} — Cozy 🐾`}
-              {currentInteractState === 'petting' && 'Purring Loudly... ❤'}
-              {currentInteractState === 'licking' && 'Grooming Shiny Fur ✨'}
-              {(currentInteractState === 'eating' || String(currentInteractState).startsWith('food:')) && 'Crunching Snacks 🍕'}
-              {currentInteractState === 'dancing' && 'Grooving on Beats 🎵'}
-              {currentInteractState === 'studying' && 'Focus Partner Mode 📚'}
-              {currentInteractState === 'sleep' && `Dreaming Zzz… ${formatDurationSeconds(sleepRemaining)}`}
-              {currentInteractState === 'laser' && 'Active Laser Play 🔴'}
+              {currentInteractState === 'petting' && 'Pet ❤'}
+              {currentInteractState === 'licking' && 'Groom ✨'}
+              {(currentInteractState === 'eating' || String(currentInteractState).startsWith('food:')) && 'Eat 🍕'}
+              {currentInteractState === 'dancing' && 'Dance 🎵'}
+              {currentInteractState === 'studying' && 'Study 📚'}
+              {currentInteractState === 'sleep' && `Sleep ${formatDurationSeconds(sleepRemaining)}`}
+              {currentInteractState === 'laser' && 'Laser 🔴'}
+              {currentInteractState === 'focusReward' && 'Celebrate 🏆'}
             </motion.div>
           </AnimatePresence>
         </div>
@@ -642,22 +646,44 @@ export default function PetWidget({
       <div
         ref={containerRef}
         onClick={handleContainerClick}
-        className="electron-no-drag relative flex flex-col items-center justify-center transition-all duration-300 select-none cursor-default bg-transparent"
+        onMouseEnter={() => setShowWidgetChrome(true)}
+        onMouseLeave={() => {
+          if (!widgetResizeRef.current) setShowWidgetChrome(false);
+        }}
+        className="electron-no-drag relative flex flex-col items-center justify-center transition-all duration-300 select-none cursor-default bg-transparent overflow-visible"
         style={{ width: widgetSize, height: widgetSize }}
       >
-        <div className="electron-drag-region absolute top-1 left-1 z-[70] bg-slate-950/70 text-white/80 border border-slate-700/60 rounded-full px-2.5 py-1 text-[8px] font-black uppercase tracking-wider backdrop-blur-sm cursor-move">
+        <StatChangeFlash
+          stats={stats}
+          flashing={statFlash}
+          petName={petName}
+          side={compactMode ? 'right' : 'left'}
+          placement={compactMode ? 'inset-bottom' : 'side'}
+          maxWidth={statsPanelWidth}
+        />
+        <div
+          className={`electron-drag-region absolute top-1 left-1 z-[70] bg-slate-950/70 text-white/80 border border-slate-700/60 rounded-full px-2.5 py-1 text-[8px] font-black uppercase tracking-wider backdrop-blur-sm cursor-move transition-opacity duration-200 ${
+            widgetChromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+        >
           Drag
         </div>
         <button
           type="button"
           onPointerDown={beginWidgetResize}
           onClick={(e) => e.stopPropagation()}
-          className="widget-resize-handle absolute bottom-1 right-1 z-[70] bg-indigo-600/90 hover:bg-indigo-500 text-white border border-indigo-300/40 rounded-full w-7 h-7 text-[13px] font-black shadow-lg cursor-nwse-resize"
+          className={`widget-resize-handle absolute bottom-1 right-1 z-[70] bg-indigo-600/90 hover:bg-indigo-500 text-white border border-indigo-300/40 rounded-full w-7 h-7 text-[13px] font-black shadow-lg cursor-nwse-resize transition-opacity duration-200 ${
+            widgetChromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
           title="Drag to resize widget"
         >
           ↘
         </button>
-        <div className="absolute bottom-2 left-1 z-[70] bg-slate-950/60 text-white/70 border border-slate-700/50 rounded-full px-2 py-0.5 text-[8px] font-bold pointer-events-none">
+        <div
+          className={`absolute bottom-2 left-1 z-[70] bg-slate-950/60 text-white/70 border border-slate-700/50 rounded-full px-2 py-0.5 text-[8px] font-bold pointer-events-none transition-opacity duration-200 ${
+            widgetChromeVisible ? 'opacity-100' : 'opacity-0'
+          }`}
+        >
           {Math.round(widgetSize)}px
         </div>
         
@@ -698,173 +724,193 @@ export default function PetWidget({
           </motion.div>
         ))}
 
-        {/* POPUP OPTIONS MENU OVERLAY - Appappears dynamically when the user clicks the pet */}
+        {/* Meow menu — opens on pet click */}
         <AnimatePresence>
           {showOptionsPopup && (
             <motion.div
-              initial={{ opacity: 0, scale: 0.85 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.85 }}
-              className={`electron-no-drag absolute z-40 flex flex-col items-center justify-center p-5 transition-all ${getPopupBgStyle()}`}
+              initial={{ opacity: 0, scale: 0.88, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.88, y: 8 }}
+              className={interactionShellClass}
               style={{
-                width: interactionSize.width,
-                height: interactionSize.height,
-                left: `calc(50% - ${interactionSize.width / 2}px)`,
-                top: `calc(50% - ${interactionSize.height / 2}px)`,
-                maxWidth: 'calc(100vw - 24px)',
-                maxHeight: 'calc(100vh - 24px)',
+                width: Math.min(interactionSize.width, widgetSize + 48),
+                height: Math.min(interactionSize.height, widgetSize + 80),
+                left: `calc(50% - ${Math.min(interactionSize.width, widgetSize + 48) / 2}px)`,
+                top: `calc(50% - ${Math.min(interactionSize.height, widgetSize + 80) / 2}px)`,
+                maxWidth: `min(calc(100vw - 16px), ${widgetSize + 48}px)`,
+                maxHeight: `min(calc(100vh - 16px), ${widgetSize + 80}px)`,
               }}
             >
-              <button
-                onClick={() => setShowOptionsPopup(false)}
-                className="absolute top-2 right-2 p-1.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-full transition-colors cursor-pointer"
-                title="Close"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-
-              <div className="text-[10px] uppercase font-black tracking-widest text-indigo-400 mb-1.5 mt-1 animate-pulse">
-                Companion Interactions
-              </div>
-              <div className="text-[8px] text-slate-400 mb-2 font-bold">
-                Drag ↘ to resize menu
-              </div>
-
-              {/* Scrollable Container for many actions */}
-              <div className="flex-1 min-h-0 overflow-y-auto w-full px-2 pr-1 space-y-3.5 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
-                {/* Standard grid */}
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <button
-                    onClick={() => handleAction('petting')}
-                    disabled={sleepActive}
-                    className="flex flex-col items-center justify-center p-2 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/80 rounded-xl text-rose-300 transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none"
-                  >
-                    <Heart className="w-4 h-4 animate-pulse fill-rose-500/20" />
-                    <span className="text-[8px] font-extrabold mt-1">Pet Cat</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleAction('licking')}
-                    disabled={sleepActive}
-                    className="flex flex-col items-center justify-center p-2 bg-sky-950/40 hover:bg-sky-900/60 border border-sky-800/80 rounded-xl text-sky-300 transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none"
-                  >
-                    <Sparkles className="w-4 h-4 text-sky-400" />
-                    <span className="text-[8px] font-extrabold mt-1">Groom Fur</span>
-                  </button>
-
-                  <button
-                    onClick={() => setFeedDrawerOpen(!feedDrawerOpen)}
-                    disabled={sleepActive}
-                    className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none ${
-                      feedDrawerOpen
-                        ? 'bg-amber-800 border-amber-500 text-white animate-pulse'
-                        : 'bg-amber-950/40 hover:bg-amber-900/60 border border-amber-800/80 text-amber-305 hover:text-amber-300'
-                    }`}
-                  >
-                    <Utensils className="w-4 h-4" />
-                    <span className="text-[8px] font-extrabold mt-1">{feedDrawerOpen ? "Close Tray" : "Feed Snack"}</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleAction('dancing')}
-                    disabled={sleepActive}
-                    className="flex flex-col items-center justify-center p-2 bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/80 rounded-xl text-indigo-305 text-indigo-300 transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none"
-                  >
-                    <Music className="w-4 h-4" />
-                    <span className="text-[8px] font-extrabold mt-1">Dance Beat</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleAction('laser')}
-                    disabled={sleepActive}
-                    className={`flex flex-col items-center justify-center p-2 rounded-xl border transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none ${
-                      laserMode
-                        ? 'bg-red-650 border-red-500 text-white animate-pulse'
-                        : 'bg-red-950/40 hover:bg-red-900/60 border border-red-800/80 text-red-305 hover:text-red-350'
-                    }`}
-                  >
-                    <Compass className="w-4 h-4 text-red-400" />
-                    <span className="text-[8px] font-extrabold mt-1">Laser Play</span>
-                  </button>
-
-                  {sleepActive ? (
-                    <button
-                      onClick={() => {
-                        onWakeUp?.();
-                        setShowOptionsPopup(false);
-                      }}
-                      className="flex flex-col items-center justify-center p-2 bg-amber-700/80 hover:bg-amber-600 border border-amber-500 rounded-xl text-amber-100 transition-all cursor-pointer transform hover:scale-105"
-                    >
-                      <Moon className="w-4 h-4" />
-                      <span className="text-[8px] font-extrabold mt-1">Wake Up</span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => setShowSleepSetup(true)}
-                      disabled={focusActive}
-                      className="flex flex-col items-center justify-center p-2 bg-slate-950/45 hover:bg-slate-900/60 border border-slate-800 rounded-xl text-slate-350 transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40"
-                    >
-                      <Moon className="w-4 h-4" />
-                      <span className="text-[8px] font-extrabold mt-1">Take Nap</span>
-                    </button>
-                  )}
-
-                  {assets?.customFeatures?.map((feat) => (
-                    <button
-                      key={feat.id}
-                      disabled={sleepActive}
-                      onClick={() => {
-                        const bonuses = feat.statsBonus || {};
-                        handleAction(feat.id as PetState, bonuses, feat.name);
-                      }}
-                      className="flex flex-col items-center justify-center p-2 bg-slate-900/40 hover:bg-slate-800/60 border border-slate-850 rounded-xl text-indigo-200 hover:text-white transition-all cursor-pointer transform hover:scale-105 disabled:opacity-40 disabled:pointer-events-none"
-                    >
-                      <span className="text-xs">🎮</span>
-                      <span className="text-[8px] font-extrabold mt-1 truncate max-w-full" title={feat.name}>
-                        {feat.name}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Focus Timer Segment */}
-                <div className="space-y-1.5 border-t border-slate-850/60 pt-2 text-left">
-                  <div className="text-[7.5px] uppercase font-black text-slate-400 tracking-wider">
-                    Focus Timer
+              <div className="shrink-0 px-4 pt-3 pb-2 bg-gradient-to-r from-violet-600/35 via-fuchsia-600/20 to-indigo-600/35 border-b border-white/10 rounded-t-[2rem]">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[11px] font-black text-white/95 tracking-wide">Meowmeowo~ mew? 🐾</p>
+                    <p className="text-[9px] font-bold text-violet-200/90 truncate max-w-[180px]">with {petName}</p>
                   </div>
+                  <button
+                    onClick={() => setShowOptionsPopup(false)}
+                    className="p-2 text-violet-100/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-colors cursor-pointer shrink-0"
+                    title="Close"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-[8px] text-violet-200/70 mt-1 font-medium">Pick a thing · drag ↘ to stretch~</p>
+              </div>
+
+              <div className="flex-1 min-h-0 overflow-y-auto w-full px-3 py-2.5 space-y-3 scrollbar-thin scrollbar-thumb-violet-800/60 scrollbar-track-transparent">
+                <div className="rounded-2xl bg-white/5 border border-white/10 p-2 space-y-2">
+                  <p className="text-[7px] font-black uppercase tracking-widest text-rose-300/90 px-0.5">Care</p>
                   <div className="grid grid-cols-2 gap-2">
                     <button
-                      onClick={() => {
-                        setShowFocusSetup(true);
-                      }}
-                      className="flex flex-col items-center justify-center p-1.5 bg-indigo-950/50 hover:bg-indigo-900/70 border border-indigo-800/50 rounded-lg text-indigo-305 text-indigo-300 transition-all cursor-pointer transform hover:scale-105"
+                      onClick={() => handleAction('petting')}
+                      disabled={sleepActive}
+                      className={actionTileClass('bg-rose-500/20 border-rose-400/35 text-rose-100')}
                     >
-                      <span className="text-xs">📚</span>
-                      <span className="text-[7.5px] font-bold mt-1">Focus</span>
+                      <Heart className="w-4 h-4 fill-rose-400/30" />
+                      <span className="text-[8px] font-extrabold">Pet</span>
                     </button>
                     <button
-                      onClick={() => {
-                        stopFocusTimer();
-                        setShowOptionsPopup(false);
-                      }}
-                      className="flex flex-col items-center justify-center p-1.5 bg-slate-950/50 hover:bg-slate-900/70 border border-slate-800/50 rounded-lg text-slate-300 transition-all cursor-pointer transform hover:scale-105"
+                      onClick={() => handleAction('licking')}
+                      disabled={sleepActive}
+                      className={actionTileClass('bg-sky-500/20 border-sky-400/35 text-sky-100')}
                     >
-                      <span className="text-xs">⏹️</span>
-                      <span className="text-[7.5px] font-bold mt-1">Stop</span>
+                      <Sparkles className="w-4 h-4" />
+                      <span className="text-[8px] font-extrabold">Groom</span>
                     </button>
                   </div>
+                </div>
+
+                <div className="rounded-2xl bg-white/5 border border-white/10 p-2 space-y-2">
+                  <p className="text-[7px] font-black uppercase tracking-widest text-amber-300/90 px-0.5">Snacks & play</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      onClick={() => setFeedDrawerOpen(!feedDrawerOpen)}
+                      disabled={sleepActive}
+                      className={actionTileClass(
+                        feedDrawerOpen
+                          ? 'bg-amber-500/45 border-amber-300/60 text-white ring-2 ring-amber-300/40'
+                          : 'bg-amber-500/18 border-amber-400/30 text-amber-100'
+                      )}
+                    >
+                      <Utensils className="w-4 h-4" />
+                      <span className="text-[8px] font-extrabold">{feedDrawerOpen ? 'Close' : 'Feed'}</span>
+                    </button>
+                    <button
+                      onClick={() => handleAction('dancing')}
+                      disabled={sleepActive}
+                      className={actionTileClass('bg-fuchsia-500/20 border-fuchsia-400/35 text-fuchsia-100')}
+                    >
+                      <Music className="w-4 h-4" />
+                      <span className="text-[8px] font-extrabold">Dance</span>
+                    </button>
+                    <button
+                      onClick={() => handleAction('laser')}
+                      disabled={sleepActive}
+                      className={actionTileClass(
+                        laserMode
+                          ? 'bg-red-500/45 border-red-300/55 text-white ring-2 ring-red-400/50'
+                          : 'bg-red-500/18 border-red-400/30 text-red-100'
+                      )}
+                    >
+                      <Compass className="w-4 h-4" />
+                      <span className="text-[8px] font-extrabold">Laser</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl bg-white/5 border border-white/10 p-2 space-y-2">
+                  <p className="text-[7px] font-black uppercase tracking-widest text-indigo-300/90 px-0.5">Rest & focus</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {sleepActive ? (
+                      <button
+                        onClick={() => {
+                          onWakeUp?.();
+                          setShowOptionsPopup(false);
+                        }}
+                        className={actionTileClass('col-span-2 bg-amber-500/30 border-amber-300/45 text-amber-50')}
+                      >
+                        <Moon className="w-4 h-4" />
+                        <span className="text-[8px] font-extrabold">Wake up</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => setShowSleepSetup(true)}
+                        disabled={focusActive}
+                        className={actionTileClass('bg-slate-500/25 border-slate-400/30 text-slate-100')}
+                      >
+                        <Moon className="w-4 h-4" />
+                        <span className="text-[8px] font-extrabold">Nap</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setShowFocusSetup(true)}
+                      disabled={sleepActive}
+                      className={actionTileClass('bg-indigo-500/25 border-indigo-400/35 text-indigo-100')}
+                    >
+                      <Clock className="w-4 h-4" />
+                      <span className="text-[8px] font-extrabold">Study</span>
+                    </button>
+                    {(focusActive || sleepActive) && (
+                      <button
+                        onClick={() => {
+                          if (focusActive) stopFocusTimer();
+                          if (sleepActive) onWakeUp?.();
+                          setShowOptionsPopup(false);
+                        }}
+                        className={actionTileClass('col-span-2 bg-slate-600/40 border-slate-400/35 text-slate-100')}
+                      >
+                        <span className="text-xs">⏹</span>
+                        <span className="text-[8px] font-extrabold">Stop timer</span>
+                      </button>
+                    )}
+                  </div>
                   {focusActive && (
-                    <div className="text-center text-[9px] font-black text-indigo-300 bg-slate-950/70 border border-indigo-900/50 rounded-lg py-1">
-                      Focus running: {formatFocusTime(focusRemaining)}
-                    </div>
+                    <p className="text-center text-[9px] font-bold text-indigo-200/90 bg-indigo-500/15 rounded-xl py-1 border border-indigo-400/20">
+                      Studying · {formatFocusTime(focusRemaining)}
+                    </p>
                   )}
                   {sleepActive && (
-                    <div className="text-center text-[9px] font-black text-indigo-200 bg-slate-950/70 border border-indigo-900/50 rounded-lg py-1">
-                      Sleeping: {formatDurationSeconds(sleepRemaining)}
-                    </div>
+                    <p className="text-center text-[9px] font-bold text-violet-200/90 bg-violet-500/15 rounded-xl py-1 border border-violet-400/20">
+                      Sleeping · {formatDurationSeconds(sleepRemaining)}
+                    </p>
                   )}
                 </div>
 
+                {assets?.customFeatures && assets.customFeatures.length > 0 && (
+                  <div className="rounded-2xl bg-white/5 border border-white/10 p-2 space-y-2">
+                    <p className="text-[7px] font-black uppercase tracking-widest text-emerald-300/90 px-0.5">Custom</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {assets.customFeatures.map((feat) => (
+                        <button
+                          key={feat.id}
+                          disabled={sleepActive}
+                          onClick={() => {
+                            const bonuses = feat.statsBonus || {};
+                            handleAction(feat.id as PetState, bonuses, feat.name);
+                          }}
+                          className={actionTileClass('bg-emerald-500/15 border-emerald-400/25 text-emerald-100')}
+                        >
+                          <span className="text-sm leading-none">✨</span>
+                          <span className="text-[8px] font-extrabold truncate max-w-full" title={feat.name}>
+                            {feat.name}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {feedDrawerOpen && (
+                  <div className="rounded-2xl bg-amber-500/10 border border-amber-400/25 p-2.5 animate-fade-in space-y-2">
+                    <p className="text-[8px] font-black uppercase tracking-wider text-amber-200 text-center">
+                      Drag a treat onto {petName}
+                    </p>
+                    <div className="grid grid-cols-4 gap-1.5 w-full">
+                      {(assets.foods || DEFAULT_FOODS).map((food) => renderFoodDragItem(food))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {isActivityBusy && onReturnToIdle && (
@@ -874,54 +920,19 @@ export default function PetWidget({
                     onReturnToIdle();
                     setShowOptionsPopup(false);
                   }}
-                  className="w-full py-2 bg-slate-700 hover:bg-slate-600 text-white font-extrabold rounded-xl text-[9px] uppercase tracking-wider cursor-pointer"
+                  className="mx-3 mb-2 py-2 bg-white/10 hover:bg-white/18 border border-white/15 text-violet-100 font-bold rounded-2xl text-[9px] uppercase tracking-wider cursor-pointer"
                 >
-                  Return to Idle
+                  Return to idle
                 </button>
               )}
 
-              {/* Hot-spot custom duration timer controller */}
-              <div className="flex items-center gap-1.5 mt-2 bg-slate-900 px-3 py-1 rounded-full border border-slate-800 shadow-lg select-none">
-                <span className="text-[8.5px] font-black uppercase text-slate-400 animate-pulse">Pose Time:</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="600"
-                  value={customDuration}
-                  onChange={(e) => {
-                    const val = Math.max(1, Math.min(600, parseInt(e.target.value) || 5));
-                    if (setCustomDuration) setCustomDuration(val);
-                  }}
-                  className="w-10 text-center bg-slate-950 border border-slate-750 border-slate-705 rounded px-1.5 py-0.5 text-[9px] font-black text-indigo-400 font-mono"
-                />
-                <span className="text-[8.5px] font-black uppercase text-slate-400">secs</span>
-              </div>
-
-              {/* Expandable Food Tray */}
-              {feedDrawerOpen && (
-                <div className="w-full mt-2 border-t border-slate-800/60 pt-2 animate-fade-in">
-                  <div className="text-[8px] font-black uppercase tracking-wider text-amber-400 mb-1 flex justify-between items-center px-1">
-                    <span>🐟 Treat Tray (Drag emoji to cat)</span>
-                    <span className="text-rose-400 font-bold scale-95 uppercase">Click to pick • Drag to feed</span>
-                  </div>
-                  <p className="text-[8px] text-amber-200/90 text-center mb-1.5 font-bold">
-                    Tap a snack — menu closes so you can drag it onto the cat
-                  </p>
-                  <div className="grid grid-cols-4 gap-1.5 w-full">
-                    {(assets.foods || DEFAULT_FOODS).map((food) => renderFoodDragItem(food))}
-                  </div>
-                </div>
-              )}
-
-              <div className="text-[8px] text-slate-400 mt-2 text-center max-w-[85%] font-medium">
-                Click pet again to toggle view
-              </div>
+              <p className="text-[7px] text-violet-200/50 text-center pb-2 px-3 font-medium">Tap kitty again to close~</p>
               <button
                 type="button"
                 onPointerDown={beginInteractionResize}
                 onClick={(e) => e.stopPropagation()}
-                className="interaction-resize-handle absolute bottom-2 right-2 bg-indigo-600/95 hover:bg-indigo-500 text-white border border-indigo-300/40 rounded-full w-7 h-7 text-[13px] font-black shadow-lg cursor-nwse-resize"
-                title="Drag to resize interaction menu"
+                className="interaction-resize-handle absolute bottom-2.5 right-2.5 bg-violet-500/90 hover:bg-violet-400 text-white border border-violet-300/50 rounded-full w-7 h-7 text-[12px] font-black shadow-lg cursor-nwse-resize"
+                title="Drag to resize menu"
               >
                 ↘
               </button>
@@ -935,19 +946,19 @@ export default function PetWidget({
               initial={{ opacity: 0, scale: 0.85 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.85 }}
-              className={`absolute inset-0 z-50 flex flex-col items-center justify-center p-5 transition-all ${getPopupBgStyle()}`}
+              className={`${interactionShellClass} inset-2 z-50 flex flex-col items-center justify-center p-4`}
             >
               <button
                 onClick={() => setShowSleepSetup(false)}
-                className="absolute top-2 right-2 p-1.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-full transition-colors cursor-pointer"
+                className="absolute top-2.5 right-2.5 p-2 text-violet-100/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-colors cursor-pointer"
                 title="Close"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4" />
               </button>
-              <div className="text-[10px] uppercase font-black tracking-widest text-indigo-400 mb-3">
-                Start Sleep Timer
+              <div className="text-[10px] uppercase font-black tracking-widest text-violet-200 mb-3">
+                Nap timer
               </div>
-              <div className="w-full bg-slate-950/70 border border-slate-800 rounded-2xl p-3 space-y-3 text-center">
+              <div className="w-full bg-white/5 border border-white/12 rounded-2xl p-3 space-y-3 text-center">
                 <label className="block text-[9px] font-black uppercase text-slate-400 tracking-wider">
                   Nap duration
                 </label>
@@ -993,7 +1004,7 @@ export default function PetWidget({
                   onClick={startSleepTimer}
                   className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold rounded-xl shadow-md transition-all cursor-pointer text-xs uppercase"
                 >
-                  Start Nap
+                  Sleep
                 </button>
               </div>
             </motion.div>
@@ -1006,21 +1017,21 @@ export default function PetWidget({
               initial={{ opacity: 0, scale: 0.85 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.85 }}
-              className={`absolute inset-0 z-50 flex flex-col items-center justify-center p-5 transition-all ${getPopupBgStyle()}`}
+              className={`${interactionShellClass} inset-2 z-50 flex flex-col items-center justify-center p-4`}
             >
               <button
                 onClick={() => setShowFocusSetup(false)}
-                className="absolute top-2 right-2 p-1.5 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-full transition-colors cursor-pointer"
+                className="absolute top-2.5 right-2.5 p-2 text-violet-100/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-colors cursor-pointer"
                 title="Close"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4" />
               </button>
-              <div className="text-[10px] uppercase font-black tracking-widest text-indigo-400 mb-3">
-                Start Focus Timer
+              <div className="text-[10px] uppercase font-black tracking-widest text-violet-200 mb-3">
+                Study timer
               </div>
-              <div className="w-full bg-slate-950/70 border border-slate-800 rounded-2xl p-3 space-y-3 text-center">
+              <div className="w-full bg-white/5 border border-white/12 rounded-2xl p-3 space-y-3 text-center">
                 <label className="block text-[9px] font-black uppercase text-slate-400 tracking-wider">
-                  Focus duration
+                  Study duration
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   {[
@@ -1065,14 +1076,14 @@ export default function PetWidget({
                   onClick={startFocusTimer}
                   className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold rounded-xl shadow-md transition-all cursor-pointer text-xs uppercase"
                 >
-                  Start Focus
+                  Start study
                 </button>
                 {focusActive && (
                   <button
                     onClick={stopFocusTimer}
                     className="w-full py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl shadow-md transition-all cursor-pointer text-[10px] uppercase"
                   >
-                    Stop Current Timer
+                    Stop
                   </button>
                 )}
               </div>
@@ -1080,53 +1091,38 @@ export default function PetWidget({
           )}
         </AnimatePresence>
 
-        {/* FLOAT STATS HUD — happiness, energy, cleanliness */}
+        {/* FLOAT STATS HUD — scales with widget, stays inside window bounds */}
         <AnimatePresence>
           {isHovered && !showOptionsPopup && (
             <motion.div
-              initial={{ opacity: 0, scale: 0.92, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.92, y: 15 }}
-              className="absolute z-50 bg-slate-900/95 backdrop-blur-md border border-slate-800 text-white rounded-2xl p-4 shadow-2xl w-[230px] pointer-events-none select-none flex flex-col gap-2.5 md:left-full md:top-0 md:ml-4 left-1/2 -translate-x-1/2 bottom-[105%] mb-2"
+              initial={{ opacity: 0, scale: 0.94 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.94 }}
+              className="absolute z-[55] left-1/2 -translate-x-1/2 top-1 pointer-events-none select-none flex flex-col gap-1.5 rounded-2xl bg-slate-950/94 backdrop-blur-md border border-violet-500/30 shadow-xl px-2.5 py-2"
+              style={{ width: statsPanelWidth }}
             >
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                <span className="text-[10px] font-black uppercase tracking-wider text-indigo-400">{petName}</span>
-              </div>
-
-              <div className="space-y-2 text-[10px] font-bold">
-                {/* Happiness */}
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-emerald-300">
-                    <span className="flex items-center gap-1">😊 Happiness</span>
-                    <span>{formatStatScore(stats.happiness)}/100</span>
+              <span className="text-[8px] font-black uppercase tracking-wider text-violet-300 truncate text-center">
+                {petName}
+              </span>
+              {(
+                [
+                  { key: 'happiness', emoji: '😊', label: 'Happy', color: 'bg-emerald-400', text: 'text-emerald-300', value: stats.happiness },
+                  { key: 'energy', emoji: '⚡', label: 'Energy', color: 'bg-amber-400', text: 'text-amber-300', value: stats.energy },
+                  { key: 'cleanliness', emoji: '✨', label: 'Clean', color: 'bg-violet-400', text: 'text-violet-300', value: stats.cleanliness },
+                ] as const
+              ).map((row) => (
+                <div key={row.key} className="space-y-0.5">
+                  <div className={`flex justify-between items-center font-bold ${row.text}`} style={{ fontSize: Math.max(8, widgetSize * 0.028) }}>
+                    <span>
+                      {row.emoji} {row.label}
+                    </span>
+                    <span className="font-mono opacity-90">{formatStatScore(row.value)}</span>
                   </div>
-                  <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                    <div className="bg-emerald-400 h-full rounded-full" style={{ width: `${stats.happiness}%` }} />
-                  </div>
-                </div>
-
-                {/* Energy */}
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-amber-300">
-                    <span className="flex items-center gap-1">⚡ Energy</span>
-                    <span>{formatStatScore(stats.energy)}/100</span>
-                  </div>
-                  <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                    <div className="bg-amber-400 h-full rounded-full" style={{ width: `${stats.energy}%` }} />
+                  <div className="w-full bg-slate-800/90 rounded-full overflow-hidden" style={{ height: statsBarHeight }}>
+                    <div className={`${row.color} h-full rounded-full transition-all duration-300`} style={{ width: `${row.value}%` }} />
                   </div>
                 </div>
-
-                {/* Cleanliness */}
-                <div className="space-y-1">
-                  <div className="flex justify-between items-center text-indigo-300">
-                    <span className="flex items-center gap-1">✨ Cleanliness</span>
-                    <span>{formatStatScore(stats.cleanliness)}/100</span>
-                  </div>
-                  <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                    <div className="bg-indigo-400 h-full rounded-full" style={{ width: `${stats.cleanliness}%` }} />
-                  </div>
-                </div>
-              </div>
+              ))}
             </motion.div>
           )}
         </AnimatePresence>
@@ -1219,12 +1215,6 @@ export default function PetWidget({
             <div className="absolute inset-0 flex items-center justify-center bg-rose-500/10 rounded-full animate-ping pointer-events-none" />
           )}
 
-          {currentInteractState === 'licking' && asset.type === 'image' && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <Sparkles className="w-14 h-14 text-sky-450 animate-spin-slow opacity-80" />
-            </div>
-          )}
-
           {(currentInteractState === 'eating' || String(currentInteractState).startsWith('food:')) && asset.type === 'image' && (
             <div className="absolute -top-1 right-0 bg-yellow-400 text-slate-900 border border-yellow-250 font-extrabold text-[9px] px-2 py-0.5 rounded-full shadow-md animate-bounce transform rotate-6">
               MUNCH CHOP! 🍪
@@ -1242,11 +1232,26 @@ export default function PetWidget({
         {list.length > 1 && (
           <button
             onClick={cycleActiveIndex}
-            className="absolute bottom-6 z-20 bg-slate-950/90 hover:bg-slate-950 text-white/95 border border-slate-700/80 rounded-full px-2.5 py-1 text-[9px] font-bold flex items-center justify-center gap-1.5 cursor-pointer backdrop-blur-sm shadow-lg transition-all duration-150 hover:scale-105 active:scale-95"
-            title="Multiple uploads exist for this feature! Click to switch."
+            className={`absolute bottom-6 z-20 bg-slate-950/90 hover:bg-slate-950 text-white/95 border border-slate-700/80 rounded-full px-2.5 py-1 text-[9px] font-bold flex items-center justify-center gap-1.5 cursor-pointer backdrop-blur-sm shadow-lg transition-all duration-200 hover:scale-105 active:scale-95 ${
+              widgetChromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+            }`}
+            title={
+              poseMediaSlideshowSeconds > 0
+                ? `Slideshow every ${formatDurationSeconds(poseMediaSlideshowSeconds)} — click to skip ahead`
+                : 'Multiple uploads — click to switch'
+            }
           >
-            <RefreshCw className="w-2.5 h-2.5 text-indigo-400" />
-            <span>Cycle Media ({activeIdx + 1}/{list.length})</span>
+            <RefreshCw
+              className={`w-2.5 h-2.5 text-indigo-400 ${poseMediaSlideshowSeconds > 0 ? 'animate-spin' : ''}`}
+              style={
+                poseMediaSlideshowSeconds > 0
+                  ? { animationDuration: `${Math.max(0.5, poseMediaSlideshowSeconds)}s` }
+                  : undefined
+              }
+            />
+            <span>
+              {poseMediaSlideshowSeconds > 0 ? 'Slideshow' : 'Cycle'} ({activeIdx + 1}/{list.length})
+            </span>
           </button>
         )}
 

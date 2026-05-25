@@ -23,6 +23,7 @@ export const DEFAULT_COMPANION_SETTINGS: CompanionSettings = {
     laser: { happiness: 5, energy: -5, cleanliness: 0 },
     sleep: { happiness: 0, energy: 45, cleanliness: 0 },
   },
+  poseMediaSlideshowSeconds: 0,
   snackInventory: Object.fromEntries(DEFAULT_FOODS.map((f) => [f.id, 1])),
   initialSnackCounts: Object.fromEntries(DEFAULT_FOODS.map((f) => [f.id, 1])),
 };
@@ -64,40 +65,54 @@ function mergeActivityRewards(
   return merged;
 }
 
+export function normalizeCompanionSettings(
+  parsed?: Partial<CompanionSettings> & { sleepReward?: Partial<ActivityStatBonus> } | null
+): CompanionSettings {
+  if (!parsed) {
+    return { ...DEFAULT_COMPANION_SETTINGS };
+  }
+
+  const legacyDecay = parsed.decayPerHour as Partial<CompanionSettings['decayPerHour']> & {
+    hunger?: number;
+  } | undefined;
+
+  return {
+    ...DEFAULT_COMPANION_SETTINGS,
+    ...parsed,
+    petName:
+      typeof parsed.petName === 'string' && parsed.petName.trim()
+        ? parsed.petName.trim().slice(0, 32)
+        : DEFAULT_PET_NAME,
+    decayPerHour: {
+      happiness: legacyDecay?.happiness ?? DEFAULT_COMPANION_SETTINGS.decayPerHour.happiness,
+      energy: legacyDecay?.energy ?? DEFAULT_COMPANION_SETTINGS.decayPerHour.energy,
+      cleanliness: legacyDecay?.cleanliness ?? DEFAULT_COMPANION_SETTINGS.decayPerHour.cleanliness,
+    },
+    focusRewardPer25Min: {
+      ...DEFAULT_COMPANION_SETTINGS.focusRewardPer25Min,
+      ...parsed.focusRewardPer25Min,
+      snacks: parsed.focusRewardPer25Min?.snacks ?? DEFAULT_COMPANION_SETTINGS.focusRewardPer25Min.snacks,
+    },
+    activityRewards: mergeActivityRewards(parsed.activityRewards, parsed.sleepReward),
+    poseMediaSlideshowSeconds: Math.max(
+      0,
+      Math.min(24 * 3600, parsed.poseMediaSlideshowSeconds ?? DEFAULT_COMPANION_SETTINGS.poseMediaSlideshowSeconds)
+    ),
+    snackInventory: { ...DEFAULT_COMPANION_SETTINGS.snackInventory, ...parsed.snackInventory },
+    initialSnackCounts: {
+      ...DEFAULT_COMPANION_SETTINGS.initialSnackCounts,
+      ...parsed.initialSnackCounts,
+    },
+  };
+}
+
 export function loadCompanionSettings(): CompanionSettings {
   const saved = localStorage.getItem('desktop_pet_companion_settings');
   if (saved) {
     try {
-      const parsed = JSON.parse(saved) as Partial<CompanionSettings> & {
-        sleepReward?: Partial<ActivityStatBonus>;
-      };
-      const legacyDecay = parsed.decayPerHour as Partial<CompanionSettings['decayPerHour']> & {
-        hunger?: number;
-      } | undefined;
-      return {
-        ...DEFAULT_COMPANION_SETTINGS,
-        ...parsed,
-        petName:
-          typeof parsed.petName === 'string' && parsed.petName.trim()
-            ? parsed.petName.trim().slice(0, 32)
-            : DEFAULT_PET_NAME,
-        decayPerHour: {
-          happiness: legacyDecay?.happiness ?? DEFAULT_COMPANION_SETTINGS.decayPerHour.happiness,
-          energy: legacyDecay?.energy ?? DEFAULT_COMPANION_SETTINGS.decayPerHour.energy,
-          cleanliness: legacyDecay?.cleanliness ?? DEFAULT_COMPANION_SETTINGS.decayPerHour.cleanliness,
-        },
-        focusRewardPer25Min: {
-          ...DEFAULT_COMPANION_SETTINGS.focusRewardPer25Min,
-          ...parsed.focusRewardPer25Min,
-          snacks: parsed.focusRewardPer25Min?.snacks ?? DEFAULT_COMPANION_SETTINGS.focusRewardPer25Min.snacks,
-        },
-        activityRewards: mergeActivityRewards(parsed.activityRewards, parsed.sleepReward),
-        snackInventory: { ...DEFAULT_COMPANION_SETTINGS.snackInventory, ...parsed.snackInventory },
-        initialSnackCounts: {
-          ...DEFAULT_COMPANION_SETTINGS.initialSnackCounts,
-          ...parsed.initialSnackCounts,
-        },
-      };
+      return normalizeCompanionSettings(
+        JSON.parse(saved) as Partial<CompanionSettings> & { sleepReward?: Partial<ActivityStatBonus> }
+      );
     } catch {
       /* fall through */
     }
@@ -221,4 +236,17 @@ export function formatDurationSeconds(seconds: number): string {
 
 export function durationToSeconds(hours: number, minutes: number, seconds: number): number {
   return Math.max(1, Math.min(24 * 3600, hours * 3600 + minutes * 60 + seconds));
+}
+
+export function durationToSecondsAllowZero(hours: number, minutes: number, seconds: number): number {
+  return Math.max(0, Math.min(24 * 3600, hours * 3600 + minutes * 60 + seconds));
+}
+
+export function secondsToHms(totalSeconds: number): { hours: number; minutes: number; seconds: number } {
+  const capped = Math.max(0, Math.min(24 * 3600, totalSeconds));
+  return {
+    hours: Math.floor(capped / 3600),
+    minutes: Math.floor((capped % 3600) / 60),
+    seconds: capped % 60,
+  };
 }

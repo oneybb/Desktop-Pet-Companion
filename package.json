@@ -13,6 +13,8 @@
     "build": "vite build",
     "desktop:pack": "npm run build && electron-builder --dir",
     "desktop:dist": "npm run build && electron-builder",
+    "desktop:dist:win": "npm run build && electron-builder --win portable --x64",
+    "desktop:dist:mac": "npm run build && electron-builder --mac dmg zip --arm64",
     "preview": "vite preview",
     "clean": "rm -rf dist release public/exported-assets public/desktop-pet-seed.json server.js",
     "lint": "tsc --noEmit"
@@ -50,16 +52,40 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "artifactName": "DesktopPetCompanion-${version}-mac-${arch}.${ext}",
       "target": [
         "dmg",
         "zip"
       ]
     },
     "win": {
+      "executableName": "DesktopPetCompanion",
+      "artifactName": "DesktopPetCompanion-${version}-${os}-${arch}.${ext}",
       "target": [
-        "nsis",
-        "portable"
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
+    },
+    "portable": {
+      "artifactName": "DesktopPetCompanion-${version}-Portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "DesktopPetCompanion-${version}-Setup.exe",
+      "shortcutName": "Desktop Pet Companion",
+      "uninstallDisplayName": "Desktop Pet Companion"
     }
   }
 }

@@ -9,9 +9,12 @@ import PetWidget from './components/PetWidget';
 import StatsAndActivities from './components/StatsAndActivities';
 import CustomizerPanel from './components/CustomizerPanel';
 import { DEFAULT_FOODS, getFoodAssetKey } from './defaults';
+import { getBuiltinInteractionLabel } from './featureCatalog';
+import { advancePoseMediaIndex, getPoseMediaCount, shouldRunPoseSlideshow } from './utils/assetCycle';
 import { sanitizeUploadedFileUrls, isOversizedAssetsCache } from './utils/mediaUrl';
 import {
   loadCompanionSettings,
+  normalizeCompanionSettings,
   syncSnackInventory,
   applyFocusSessionRewards,
   applyActivityStatBonus,
@@ -79,7 +82,7 @@ export default function App() {
           if (!parsed.activeIndices) parsed.activeIndices = {};
           if (!parsed.playModes) {
             parsed.playModes = {};
-            const keys = ['idle', 'studying', 'sleep', 'shortBreak', 'rest', 'focusReward', 'eating', 'dancing', 'petting', 'licking', 'laser'];
+            const keys = ['idle', 'studying', 'sleep', 'focusReward', 'eating', 'dancing', 'petting', 'licking', 'laser'];
             keys.forEach(k => {
               parsed.playModes[k] = parsed.playMode || 'cycle';
             });
@@ -299,6 +302,18 @@ export default function App() {
         setAssets(seed.assets);
         setCustomizer(seed.customizer);
         setCustomDuration(Math.max(1, Math.min(600, seed.customDuration || 5)));
+        if (seed.companionSettings) {
+          const foods = seed.assets.foods || DEFAULT_FOODS;
+          const normalized = normalizeCompanionSettings(seed.companionSettings);
+          setCompanionSettings({
+            ...normalized,
+            snackInventory: syncSnackInventory(
+              normalized.snackInventory,
+              foods,
+              normalized.initialSnackCounts
+            ),
+          });
+        }
       } catch (err) {
         // Most local/dev runs do not include an exported seed file.
       }
@@ -471,41 +486,30 @@ export default function App() {
     return () => clearSleepTimer();
   }, [sleepActive, sleepRemaining]);
 
+  const slideshowSeconds = companionSettings.poseMediaSlideshowSeconds;
+  const poseMediaCount = getPoseMediaCount(assets, interactState);
+
+  useEffect(() => {
+    if (!shouldRunPoseSlideshow(interactState, assets, slideshowSeconds)) return;
+
+    const timer = setInterval(() => {
+      setAssets((prev) => advancePoseMediaIndex(prev, interactState));
+    }, slideshowSeconds * 1000);
+
+    return () => clearInterval(timer);
+  }, [interactState, slideshowSeconds, poseMediaCount]);
+
   // Set transient pet states with helper reset timers
-  const triggerInteractState = (state: PetState, durationMs: number = 3000) => {
+  const triggerInteractState = (state: PetState, durationMs?: number) => {
     if (sleepActive && state !== 'sleep') {
       wakeUp();
     }
     // Choose active asset index depending on the target button's specific playMode
-    const list = assets.uploadedAssets[state] || [];
-    const mode = assets.playModes[state] || 'cycle';
-    
-    const isFoodState = String(state).startsWith('food:');
-
-    if (list.length > 0 && !isFoodState) {
-      setAssets((prev) => {
-        const indices = prev.activeIndices || {};
-        const currentIdx = indices[state] ?? 0;
-        let nextIdx = currentIdx;
-        
-        if (mode === 'random' && list.length > 1) {
-          nextIdx = Math.floor(Math.random() * list.length);
-          // ensure it picks a different one if possible
-          if (nextIdx === currentIdx) {
-            nextIdx = (nextIdx + 1) % list.length;
-          }
-        } else if (list.length > 1) {
-          nextIdx = (currentIdx + 1) % list.length;
-        }
-        
-        return {
-          ...prev,
-          activeIndices: {
-            ...indices,
-            [state]: nextIdx,
-          },
-        };
-      });
+    const mediaCount = getPoseMediaCount(assets, state);
+    const slideshowOn =
+      companionSettings.poseMediaSlideshowSeconds > 0 && mediaCount > 1;
+    if (mediaCount > 0 && !slideshowOn) {
+      setAssets((prev) => advancePoseMediaIndex(prev, state));
     }
 
     if (resetTimeoutRef.current) {
@@ -517,7 +521,8 @@ export default function App() {
     if (state === 'sleep') {
       return;
     }
-    if (state !== 'idle' && state !== 'laser') {
+    // Only timed poses pass durationMs (groom, eat, manual pose preview). Study timer and idle stay until stopped.
+    if (durationMs !== undefined && durationMs > 0 && state !== 'idle' && state !== 'laser') {
       resetTimeoutRef.current = setTimeout(() => {
         setInteractState(laserMode ? 'laser' : 'idle');
         resetTimeoutRef.current = null;
@@ -603,7 +608,7 @@ export default function App() {
         <div 
           onMouseEnter={() => setIsWidgetHovered(true)}
           onMouseLeave={() => setIsWidgetHovered(false)}
-          className="fixed inset-0 flex flex-col items-center justify-center select-none overflow-hidden bg-transparent p-4 h-full w-full"
+          className="fixed inset-0 flex flex-col items-center justify-center select-none overflow-visible bg-transparent p-4 h-full w-full"
         >
           {/* Floating Hover Controls Banner - Fades in automatically on mouse over */}
           <div 
@@ -636,6 +641,7 @@ export default function App() {
             currentInteractState={interactState}
             setInteractState={triggerInteractState}
             assets={assets}
+            setAssets={setAssets}
             customizer={customizer}
             laserMode={laserMode}
             setLaserMode={setLaserMode}
@@ -643,8 +649,8 @@ export default function App() {
             stats={stats}
             setStats={setStats}
             compactMode={true}
+            poseMediaSlideshowSeconds={slideshowSeconds}
             customDuration={customDuration}
-            setCustomDuration={setCustomDuration}
             onFocusComplete={handleFocusCompleted}
             sleepActive={sleepActive}
             sleepRemaining={sleepRemaining}
@@ -681,12 +687,12 @@ export default function App() {
           <>
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             <div className="lg:col-span-5 space-y-4">
-              <div className="bg-white/95 border border-slate-200 rounded-3xl p-4 shadow-sm">
+              <div className="bg-white/95 border border-slate-200 rounded-3xl p-4 pl-8 md:pl-10 shadow-sm overflow-visible">
                 <div className="flex justify-between items-center mb-1">
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest block">Virtual Companion view</h3>
                   {interactState !== 'idle' && (
-                    <span className="text-[10px] text-indigo-600 bg-indigo-50 border border-indigo-100 font-bold px-2 py-0.5 rounded-full animate-pulse capitalize">
-                      {interactState} Active
+                    <span className="text-[10px] text-indigo-600 bg-indigo-50 border border-indigo-100 font-bold px-2 py-0.5 rounded-full animate-pulse">
+                      {getBuiltinInteractionLabel(interactState)} active
                     </span>
                   )}
                 </div>
@@ -694,6 +700,7 @@ export default function App() {
                   currentInteractState={interactState}
                   setInteractState={triggerInteractState}
                   assets={assets}
+                  setAssets={setAssets}
                   customizer={customizer}
                   laserMode={laserMode}
                   setLaserMode={setLaserMode}
@@ -701,7 +708,7 @@ export default function App() {
                   stats={stats}
                   setStats={setStats}
                   customDuration={customDuration}
-                  setCustomDuration={setCustomDuration}
+                  poseMediaSlideshowSeconds={slideshowSeconds}
                   onFocusComplete={handleFocusCompleted}
                   sleepActive={sleepActive}
                   sleepRemaining={sleepRemaining}
@@ -811,7 +818,7 @@ export default function App() {
 
               <div className="space-y-1">
                 <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest block">🎉 Session Unlocked! 🎉</span>
-                <h3 className="text-lg font-black text-slate-900 tracking-tight">Focus Reward Achieved</h3>
+                <h3 className="text-lg font-black text-slate-900 tracking-tight">Celebrate</h3>
                 <p className="text-slate-500 text-[11px] max-w-[90%] mx-auto leading-relaxed">
                   Outstanding study session completed! Your cyber companion is ecstatic and wants to celebrate your deep focus milestones!
                 </p>
@@ -905,7 +912,7 @@ export default function App() {
                 onClick={() => setShowFocusRewardModal(false)}
                 className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-505 text-white border border-indigo-700 font-extrabold rounded-xl transition-all shadow-md cursor-pointer uppercase text-xs tracking-wider"
               >
-                Claim Focus Reward Pose ✨
+                Celebrate ✨
               </button>
             </motion.div>
           </div>

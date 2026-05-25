@@ -14,7 +14,7 @@ const port = Number(process.env.EXPORT_SERVER_PORT || 5174);
 let latestArtifact = null;
 let isBuilding = false;
 
-const allowedArtifactExtensions = new Set(['.dmg', '.zip', '.exe', '.msi', '.AppImage', '.deb']);
+const INSTALLER_EXTENSIONS = new Set(['.exe', '.msi', '.dmg', '.zip', '.AppImage', '.deb']);
 
 function setCors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -41,7 +41,7 @@ function readJsonBody(req) {
     req.on('end', () => {
       try {
         resolve(JSON.parse(body || '{}'));
-      } catch (err) {
+      } catch {
         reject(new Error('Invalid JSON payload.'));
       }
     });
@@ -61,8 +61,43 @@ function dataUrlToBuffer(dataUrl) {
   if (!match) {
     throw new Error('Invalid uploaded file data.');
   }
-
   return Buffer.from(match[2], 'base64');
+}
+
+function resolveBuildFor(payload) {
+  const requested = String(payload?.buildFor || 'auto').toLowerCase();
+  if (requested === 'windows' || requested === 'win' || requested === 'win32') return 'win32';
+  if (requested === 'mac' || requested === 'darwin' || requested === 'macos') return 'darwin';
+  return process.platform;
+}
+
+function isInstallerArtifact(fileName) {
+  const lower = fileName.toLowerCase();
+  const ext = path.extname(lower);
+  if (!INSTALLER_EXTENSIONS.has(ext)) return false;
+  if (lower.endsWith('.blockmap')) return false;
+  if (lower.endsWith('.yml') || lower.endsWith('.yaml')) return false;
+  if (lower.includes('builder-debug')) return false;
+  return true;
+}
+
+function scoreArtifact(fileName, buildFor) {
+  const lower = fileName.toLowerCase();
+  let score = 0;
+  if (!isInstallerArtifact(fileName)) return -1;
+
+  if (buildFor === 'win32') {
+    if (!lower.endsWith('.exe')) return -1;
+    if (lower.includes('portable')) score += 100;
+    if (lower.includes('setup')) score += 80;
+    if (lower.includes('desktoppetcompanion')) score += 10;
+    if (lower.includes('arm64') && process.arch === 'x64') score -= 5;
+  } else if (buildFor === 'darwin') {
+    if (lower.endsWith('.dmg')) score += 100;
+    if (lower.endsWith('.zip') && lower.includes('mac')) score += 90;
+  }
+
+  return score;
 }
 
 async function listArtifacts() {
@@ -72,12 +107,16 @@ async function listArtifacts() {
 
     for (const entry of entries) {
       if (!entry.isFile()) continue;
-      const ext = path.extname(entry.name);
-      if (!allowedArtifactExtensions.has(ext)) continue;
+      if (!isInstallerArtifact(entry.name)) continue;
 
       const artifactPath = path.join(releaseDir, entry.name);
       const stat = await fs.stat(artifactPath);
-      artifacts.push({ name: entry.name, path: artifactPath, mtimeMs: stat.mtimeMs });
+      artifacts.push({
+        name: entry.name,
+        path: artifactPath,
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+      });
     }
 
     return artifacts.sort((a, b) => b.mtimeMs - a.mtimeMs);
@@ -86,12 +125,34 @@ async function listArtifacts() {
   }
 }
 
+function pickArtifact(artifacts, buildFor, beforeNames) {
+  const fresh = artifacts.filter((item) => !beforeNames.has(item.name));
+  const pool = fresh.length > 0 ? fresh : artifacts;
+
+  const ranked = pool
+    .map((item) => ({ item, score: scoreArtifact(item.name, buildFor) }))
+    .filter((entry) => entry.score >= 0)
+    .sort((a, b) => b.score - a.score || b.item.mtimeMs - a.item.mtimeMs);
+
+  const chosen = ranked[0]?.item;
+  if (!chosen) return null;
+
+  const minSize = buildFor === 'win32' ? 40 * 1024 * 1024 : 20 * 1024 * 1024;
+  if (chosen.size < minSize) {
+    throw new Error(
+      `Built file "${chosen.name}" looks too small (${Math.round(chosen.size / 1024 / 1024)} MB). The build may have failed — try building on a ${buildFor === 'win32' ? 'Windows' : 'Mac'} computer.`
+    );
+  }
+
+  return chosen;
+}
+
 function runCommand(command, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: rootDir,
       stdio: 'inherit',
-      shell: false,
+      shell: process.platform === 'win32',
       env: process.env,
     });
 
@@ -104,6 +165,33 @@ function runCommand(command, args) {
     });
     child.on('error', reject);
   });
+}
+
+async function buildDesktopPackage(buildFor) {
+  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  await runCommand(npmCommand, ['run', 'build']);
+
+  const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+  const builderArgs = ['electron-builder'];
+
+  if (buildFor === 'win32') {
+    if (process.platform !== 'win32') {
+      builderArgs.push('--win', 'portable', '--x64');
+    } else {
+      builderArgs.push('--win', '--x64');
+    }
+  } else if (buildFor === 'darwin') {
+    if (process.platform === 'darwin') {
+      builderArgs.push('--mac', 'dmg', 'zip', '--arm64');
+    } else {
+      throw new Error('macOS installers must be built on a Mac. Use buildFor: "windows" on this machine.');
+    }
+  } else {
+    await runCommand(npmCommand, ['run', 'desktop:dist']);
+    return;
+  }
+
+  await runCommand(npxCommand, builderArgs);
 }
 
 async function writeExportSeed(payload) {
@@ -140,6 +228,7 @@ async function writeExportSeed(payload) {
     stats: payload.stats,
     customizer: payload.customizer,
     customDuration: payload.customDuration,
+    companionSettings: payload.companionSettings,
     assets: {
       ...assets,
       useWorkspace: false,
@@ -154,6 +243,15 @@ async function writeExportSeed(payload) {
   await fs.writeFile(seedPath, `${JSON.stringify(seed, null, 2)}\n`);
 }
 
+function mimeTypeForArtifact(fileName) {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.exe')) return 'application/vnd.microsoft.portable-executable';
+  if (lower.endsWith('.msi')) return 'application/x-msi';
+  if (lower.endsWith('.dmg')) return 'application/x-apple-diskimage';
+  if (lower.endsWith('.zip')) return 'application/zip';
+  return 'application/octet-stream';
+}
+
 async function handleExport(req, res) {
   if (isBuilding) {
     sendJson(res, 409, { error: 'A desktop app build is already running.' });
@@ -163,22 +261,34 @@ async function handleExport(req, res) {
   isBuilding = true;
   try {
     const payload = await readJsonBody(req);
+    const buildFor = resolveBuildFor(payload);
     await writeExportSeed(payload);
 
     const before = new Set((await listArtifacts()).map((artifact) => artifact.name));
-    const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    await runCommand(npmCommand, ['run', 'desktop:dist']);
+    await buildDesktopPackage(buildFor);
 
     const artifacts = await listArtifacts();
-    const artifact = artifacts.find((item) => !before.has(item.name)) || artifacts[0];
+    const artifact = pickArtifact(artifacts, buildFor, before);
     if (!artifact) {
-      throw new Error('Build finished, but no downloadable artifact was found in release/.');
+      throw new Error(
+        buildFor === 'win32'
+          ? 'No Windows .exe was produced. Build this project on a Windows PC (recommended), or run: npm run desktop:dist:win'
+          : 'Build finished, but no Mac .dmg/.zip was found in release/.'
+      );
     }
 
     latestArtifact = artifact;
     sendJson(res, 200, {
       fileName: artifact.name,
+      fileSize: artifact.size,
+      buildFor,
       downloadUrl: `/api/download/${encodeURIComponent(artifact.name)}`,
+      installHint:
+        buildFor === 'win32'
+          ? artifact.name.toLowerCase().includes('portable')
+            ? 'Run the Portable .exe directly (no install). Do not rename the file.'
+            : 'Run the Setup .exe and follow the installer. Use the shortcut it creates — do not run random .exe from inside the zip folder.'
+          : 'Open the .dmg and drag the app to Applications.',
     });
   } catch (err) {
     sendJson(res, 500, { error: err instanceof Error ? err.message : 'Build failed.' });
@@ -191,16 +301,31 @@ async function handleDownload(req, res) {
   setCors(res);
   const requestedName = decodeURIComponent(req.url.split('/').pop() || '');
 
-  if (!latestArtifact || latestArtifact.name !== requestedName || !fsSync.existsSync(latestArtifact.path)) {
+  if (!latestArtifact || latestArtifact.name !== requestedName) {
     sendJson(res, 404, { error: 'No built artifact is available for download yet.' });
     return;
   }
 
+  if (!fsSync.existsSync(latestArtifact.path)) {
+    sendJson(res, 404, { error: 'Built file is missing on disk. Rebuild the app.' });
+    return;
+  }
+
+  const stat = await fs.stat(latestArtifact.path);
+  const buffer = await fs.readFile(latestArtifact.path);
+
+  if (buffer.length !== stat.size) {
+    sendJson(res, 500, { error: 'Download failed: file read was incomplete.' });
+    return;
+  }
+
   res.writeHead(200, {
-    'Content-Type': 'application/octet-stream',
+    'Content-Type': mimeTypeForArtifact(latestArtifact.name),
+    'Content-Length': String(stat.size),
     'Content-Disposition': `attachment; filename="${latestArtifact.name}"`,
+    'Cache-Control': 'no-store',
   });
-  fsSync.createReadStream(latestArtifact.path).pipe(res);
+  res.end(buffer);
 }
 
 const server = http.createServer((req, res) => {

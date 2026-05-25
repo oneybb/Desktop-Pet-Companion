@@ -288,7 +288,7 @@ export default function StatsAndActivities({
 
             <div className="space-y-2 border-t border-slate-200 pt-2">
               <span className="text-[10px] font-black text-indigo-600 uppercase tracking-wider block">
-                Focus reward per {FOCUS_REFERENCE_MINUTES}m (scales with session length)
+                Study reward per {FOCUS_REFERENCE_MINUTES}m (scales with session length)
               </span>
               {(['happiness', 'energy', 'cleanliness'] as const).map((key) => (
                 <label key={key} className="flex items-center justify-between gap-2 text-[10px] font-bold capitalize">
@@ -419,13 +419,13 @@ export default function StatsAndActivities({
             className="w-full bg-white border border-indigo-200 rounded-lg px-2 py-1.5 font-bold text-[11px] text-slate-700 cursor-pointer"
           >
             <option value="idle">🛋️ Idle</option>
-            <option value="studying">📚 Studying</option>
-            <option value="sleep">😴 Sleeping</option>
-            <option value="focusReward">🏆 Focus Reward</option>
-            <option value="eating">🍕 Eating</option>
-            <option value="dancing">🎵 Dancing</option>
-            <option value="petting">❤️ Petting</option>
-            <option value="licking">✨ Grooming</option>
+            <option value="studying">📚 Study</option>
+            <option value="sleep">😴 Sleep</option>
+            <option value="focusReward">🏆 Celebrate</option>
+            <option value="eating">🍕 Eat</option>
+            <option value="dancing">🎵 Dance</option>
+            <option value="petting">❤️ Pet</option>
+            <option value="licking">✨ Groom</option>
             {assets?.customFeatures?.map((feat) => (
               <option key={feat.id} value={feat.id}>
                 🎮 {feat.name}
@@ -442,35 +442,35 @@ export default function StatsAndActivities({
             disabled={isBusy}
             className="flex items-center justify-center gap-2 p-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl font-bold transition-all disabled:opacity-40 cursor-pointer"
           >
-            <Heart className="w-4 h-4 fill-rose-600/20 text-rose-600" /> Pet Cat
+            <Heart className="w-4 h-4 fill-rose-600/20 text-rose-600" /> Pet
           </button>
           <button
             onClick={handleLickFur}
             disabled={isBusy}
             className="flex items-center justify-center gap-2 p-3 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded-xl font-bold transition-all disabled:opacity-40 cursor-pointer"
           >
-            <Sparkles className="w-4 h-4 text-sky-600" /> Groom Fur
+            <Sparkles className="w-4 h-4 text-sky-600" /> Groom
           </button>
           <button
             onClick={handleDance}
             disabled={isBusy}
             className="flex items-center justify-center gap-2 p-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl font-bold transition-all disabled:opacity-40 cursor-pointer col-span-2"
           >
-            <Music className="w-4 h-4 text-indigo-600 animate-bounce" /> Dance Beats
+            <Music className="w-4 h-4 text-indigo-600 animate-bounce" /> Dance
           </button>
         </div>
 
         <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
           <div className="flex justify-between items-center text-xs">
             <span className="font-bold text-slate-600 flex items-center gap-1">
-              <Utensils className="w-3.5 h-3.5 text-amber-500" /> Feeding station
+              <Utensils className="w-3.5 h-3.5 text-amber-500" /> Eat
             </span>
             <button
               onClick={handleFeed}
               disabled={isBusy || (snackInventory[selectedFood] ?? 0) < 1}
               className="px-3.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition-all disabled:opacity-40 cursor-pointer shadow-sm text-[11px]"
             >
-              Feed Snack
+              Eat
             </button>
           </div>
           <div className="grid grid-cols-4 gap-1.5">
@@ -498,7 +498,7 @@ export default function StatsAndActivities({
         <div className="p-3 bg-indigo-50/60 border border-indigo-200 rounded-xl space-y-2">
           <div className="flex justify-between items-start gap-2">
             <span className="text-[10px] font-black text-indigo-800 uppercase tracking-wider flex items-center gap-1">
-              <Moon className="w-3.5 h-3.5" /> Sleep timer
+              <Moon className="w-3.5 h-3.5" /> Sleep
             </span>
             <span className="text-[9px] text-violet-700 font-bold text-right leading-tight">
               On start: ⚡{activityRewards.sleep.energy >= 0 ? '+' : ''}{activityRewards.sleep.energy} 😊
@@ -549,7 +549,7 @@ export default function StatsAndActivities({
                 disabled={isBusy}
                 className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all disabled:opacity-40 cursor-pointer text-xs"
               >
-                Start Nap
+                Sleep
               </button>
             </>
           )}
@@ -566,7 +566,7 @@ export default function StatsAndActivities({
             }`}
           >
             <Compass className="w-4 h-4" />
-            {laserMode ? 'Laser ON' : 'Laser Chase'}
+            {laserMode ? 'Laser ON' : 'Laser'}
           </button>
         </div>
 

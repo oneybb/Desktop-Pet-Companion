@@ -112,6 +112,8 @@ export interface CompanionSettings {
   decayPerHour: StatDecayRates;
   focusRewardPer25Min: FocusRewardRates;
   activityRewards: ActivityRewards;
+  /** Seconds between auto-advancing uploads while a pose is active; 0 = off */
+  poseMediaSlideshowSeconds: number;
   snackInventory: Record<string, number>;
   initialSnackCounts: Record<string, number>;
 }
