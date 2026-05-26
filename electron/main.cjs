@@ -1,9 +1,27 @@
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const isDev = !app.isPackaged;
+const DEFAULT_WINDOW_TITLE = 'Desktop Pet Companion';
+
+function readPetNameFromSeed() {
+  if (isDev) return DEFAULT_WINDOW_TITLE;
+  try {
+    const seedPath = path.join(__dirname, '..', 'dist', 'desktop-pet-seed.json');
+    const seed = JSON.parse(fs.readFileSync(seedPath, 'utf8'));
+    const name = String(seed?.companionSettings?.petName || '').trim();
+    return name.slice(0, 32) || DEFAULT_WINDOW_TITLE;
+  } catch {
+    return DEFAULT_WINDOW_TITLE;
+  }
+}
 
 function createWidgetWindow() {
+  const windowTitle = readPetNameFromSeed();
+  if (!isDev) {
+    app.setName(windowTitle);
+  }
   const { width, height } = screen.getPrimaryDisplay().workAreaSize;
   const windowWidth = 360;
   const windowHeight = 420;
@@ -21,7 +39,7 @@ function createWidgetWindow() {
     alwaysOnTop: true,
     hasShadow: false,
     backgroundColor: '#00000000',
-    title: 'Desktop Pet Companion',
+    title: windowTitle,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

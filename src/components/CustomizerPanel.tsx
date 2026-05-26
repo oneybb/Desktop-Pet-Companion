@@ -518,10 +518,11 @@ export default function CustomizerPanel({
       setDownloadFileName(result.fileName);
       setInstallHint(result.installHint ?? null);
       const sizeMb = result.fileSize ? Math.round(result.fileSize / 1024 / 1024) : null;
+      const brandedName = result.productName ? ` for ${result.productName}` : '';
       setExportStatus(
         sizeMb
-          ? `Done. Built ${result.fileName} (${sizeMb} MB). Use the download button below — wait until it finishes.`
-          : `Done. Built ${result.fileName}. Use the download button below.`,
+          ? `Done. Built ${result.fileName}${brandedName} (${sizeMb} MB). Icon uses your idle pose; app name uses Pet name (backdoor). Download below.`
+          : `Done. Built ${result.fileName}${brandedName}. Icon uses idle pose; name uses Pet name (backdoor). Download below.`,
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unknown export error.';

@@ -9,6 +9,12 @@ const publicDir = path.join(rootDir, 'public');
 const exportedAssetsDir = path.join(publicDir, 'exported-assets');
 const seedPath = path.join(publicDir, 'desktop-pet-seed.json');
 const releaseDir = path.join(rootDir, 'release');
+const brandingDir = path.join(rootDir, 'build', 'export-branding');
+const builderConfigPath = path.join(rootDir, 'build', 'electron-builder.export.json');
+const defaultIdleImagePath = path.join(
+  rootDir,
+  'src/assets/images/cat_tabby_resting_exact_1779631001778.png'
+);
 const port = Number(process.env.EXPORT_SERVER_PORT || 5174);
 
 let latestArtifact = null;
@@ -56,6 +62,26 @@ function sanitizeFileName(name) {
     .slice(0, 120);
 }
 
+function sanitizeProductName(name) {
+  const trimmed = String(name || '').trim();
+  return trimmed.slice(0, 32) || 'Desktop Pet Companion';
+}
+
+function toExecutableSlug(name) {
+  const slug = String(name || '').replace(/[^a-zA-Z0-9]+/g, '').slice(0, 40);
+  return slug || 'DesktopPet';
+}
+
+function toArtifactSlug(name) {
+  const slug = String(name || 'DesktopPet')
+    .replace(/[/\\?%*:|"<>]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48);
+  return slug || 'DesktopPet';
+}
+
 function dataUrlToBuffer(dataUrl) {
   const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || '');
   if (!match) {
@@ -81,10 +107,14 @@ function isInstallerArtifact(fileName) {
   return true;
 }
 
-function scoreArtifact(fileName, buildFor) {
+function scoreArtifact(fileName, buildFor, artifactSlug) {
   const lower = fileName.toLowerCase();
   let score = 0;
   if (!isInstallerArtifact(fileName)) return -1;
+
+  if (artifactSlug && lower.includes(artifactSlug.toLowerCase())) {
+    score += 50;
+  }
 
   if (buildFor === 'win32') {
     if (!lower.endsWith('.exe')) return -1;
@@ -125,12 +155,12 @@ async function listArtifacts() {
   }
 }
 
-function pickArtifact(artifacts, buildFor, beforeNames) {
+function pickArtifact(artifacts, buildFor, beforeNames, artifactSlug) {
   const fresh = artifacts.filter((item) => !beforeNames.has(item.name));
   const pool = fresh.length > 0 ? fresh : artifacts;
 
   const ranked = pool
-    .map((item) => ({ item, score: scoreArtifact(item.name, buildFor) }))
+    .map((item) => ({ item, score: scoreArtifact(item.name, buildFor, artifactSlug) }))
     .filter((entry) => entry.score >= 0)
     .sort((a, b) => b.score - a.score || b.item.mtimeMs - a.item.mtimeMs);
 
@@ -180,16 +210,128 @@ async function cleanStaleWinBuildArtifacts() {
   }
 }
 
+function buildElectronBuilderConfig(branding) {
+  const { productName, executableSlug, artifactSlug } = branding;
+  return {
+    appId: 'com.desktoppet.companion',
+    productName,
+    directories: {
+      output: 'release',
+      buildResources: 'build/export-branding',
+    },
+    files: ['dist/**/*', 'electron/**/*', 'package.json'],
+    mac: {
+      category: 'public.app-category.productivity',
+      icon: 'icon.png',
+      artifactName: `${artifactSlug}-\${version}-mac-\${arch}.\${ext}`,
+      target: ['dmg', 'zip'],
+    },
+    win: {
+      executableName: executableSlug,
+      icon: 'icon.png',
+      artifactName: `${artifactSlug}-\${version}-\${os}-\${arch}.\${ext}`,
+      forceCodeSigning: false,
+      signAndEditExecutable: false,
+      verifyUpdateCodeSignature: false,
+      target: [{ target: 'portable', arch: ['x64'] }],
+    },
+    portable: {
+      artifactName: `${artifactSlug}-\${version}-Portable.exe`,
+    },
+    nsis: {
+      oneClick: false,
+      perMachine: false,
+      allowToChangeInstallationDirectory: true,
+      artifactName: `${artifactSlug}-\${version}-Setup.exe`,
+      shortcutName: productName,
+      uninstallDisplayName: productName,
+    },
+  };
+}
+
+async function resolveIdleImageBuffer(payload, writtenUploadedAssets) {
+  const assets = payload.assets || {};
+  const files = Array.isArray(payload.files) ? payload.files : [];
+
+  const idleList = (writtenUploadedAssets?.idle || []).filter((f) => f.type !== 'video');
+  if (idleList.length > 0) {
+    const idx =
+      (((assets.activeIndices?.idle ?? 0) % idleList.length) + idleList.length) % idleList.length;
+    const rel = String(idleList[idx].url || '').replace(/^\.\//, '');
+    const diskPath = path.join(publicDir, rel);
+    if (fsSync.existsSync(diskPath)) {
+      return fs.readFile(diskPath);
+    }
+  }
+
+  const idleFromFiles = files.filter(
+    (f) => String(f.feature || 'idle') === 'idle' && f.type !== 'video' && f.dataUrl
+  );
+  if (idleFromFiles.length > 0) {
+    const idx =
+      (((assets.activeIndices?.idle ?? 0) % idleFromFiles.length) + idleFromFiles.length) %
+      idleFromFiles.length;
+    return dataUrlToBuffer(idleFromFiles[idx].dataUrl);
+  }
+
+  if (assets.useWorkspace && assets.workspacePaths?.idle) {
+    const wsRel = String(assets.workspacePaths.idle).replace(/^\//, '');
+    const wsPath = path.join(publicDir, wsRel);
+    if (fsSync.existsSync(wsPath)) {
+      return fs.readFile(wsPath);
+    }
+  }
+
+  if (fsSync.existsSync(defaultIdleImagePath)) {
+    return fs.readFile(defaultIdleImagePath);
+  }
+
+  throw new Error('No idle image found for app icon. Upload an idle pose or add a default image.');
+}
+
+async function prepareBuildBranding(payload, writtenUploadedAssets) {
+  const productName = sanitizeProductName(payload.companionSettings?.petName);
+  const executableSlug = toExecutableSlug(productName);
+  const artifactSlug = toArtifactSlug(productName);
+
+  await fs.rm(brandingDir, { recursive: true, force: true });
+  await fs.mkdir(brandingDir, { recursive: true });
+
+  const imageBuffer = await resolveIdleImageBuffer(payload, writtenUploadedAssets);
+  let sharp;
+  try {
+    sharp = require('sharp');
+  } catch {
+    throw new Error('Missing "sharp" package. Run: npm install');
+  }
+
+  const iconBuffer = await sharp(imageBuffer)
+    .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toBuffer();
+
+  await fs.writeFile(path.join(brandingDir, 'icon.png'), iconBuffer);
+  await fs.writeFile(
+    path.join(brandingDir, 'meta.json'),
+    `${JSON.stringify({ productName, executableSlug, artifactSlug }, null, 2)}\n`
+  );
+
+  const config = buildElectronBuilderConfig({ productName, executableSlug, artifactSlug });
+  await fs.mkdir(path.dirname(builderConfigPath), { recursive: true });
+  await fs.writeFile(builderConfigPath, `${JSON.stringify(config, null, 2)}\n`);
+
+  return { productName, executableSlug, artifactSlug };
+}
+
 async function buildDesktopPackage(buildFor) {
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   await runCommand(npmCommand, ['run', 'build']);
 
   const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-  const builderArgs = ['electron-builder'];
+  const builderArgs = ['electron-builder', '--config', builderConfigPath];
 
   if (buildFor === 'win32') {
     await cleanStaleWinBuildArtifacts();
-    // Portable .exe only — NSIS cross-build on Mac often fails (missing .nsis.7z).
     builderArgs.push('--win', 'portable', '--x64');
   } else if (buildFor === 'darwin') {
     if (process.platform === 'darwin') {
@@ -198,7 +340,7 @@ async function buildDesktopPackage(buildFor) {
       throw new Error('macOS installers must be built on a Mac. Use buildFor: "windows" on this machine.');
     }
   } else {
-    await runCommand(npmCommand, ['run', 'desktop:dist']);
+    await runCommand(npxCommand, ['electron-builder', '--config', builderConfigPath]);
     return;
   }
 
@@ -257,6 +399,8 @@ async function writeExportSeed(payload) {
 
   await fs.mkdir(publicDir, { recursive: true });
   await fs.writeFile(seedPath, `${JSON.stringify(seed, null, 2)}\n`);
+
+  return { uploadedAssets };
 }
 
 function mimeTypeForArtifact(fileName) {
@@ -278,13 +422,14 @@ async function handleExport(req, res) {
   try {
     const payload = await readJsonBody(req);
     const buildFor = resolveBuildFor(payload);
-    await writeExportSeed(payload);
+    const { uploadedAssets } = await writeExportSeed(payload);
+    const branding = await prepareBuildBranding(payload, uploadedAssets);
 
     const before = new Set((await listArtifacts()).map((artifact) => artifact.name));
     await buildDesktopPackage(buildFor);
 
     const artifacts = await listArtifacts();
-    const artifact = pickArtifact(artifacts, buildFor, before);
+    const artifact = pickArtifact(artifacts, buildFor, before, branding.artifactSlug);
     if (!artifact) {
       throw new Error(
         buildFor === 'win32'
@@ -298,13 +443,14 @@ async function handleExport(req, res) {
       fileName: artifact.name,
       fileSize: artifact.size,
       buildFor,
+      productName: branding.productName,
       downloadUrl: `/api/download/${encodeURIComponent(artifact.name)}`,
       installHint:
         buildFor === 'win32'
           ? artifact.name.toLowerCase().includes('portable')
-            ? 'Run the Portable .exe directly (no install). Do not rename the file.'
-            : 'Run the Setup .exe and follow the installer. Use the shortcut it creates — do not run random .exe from inside the zip folder.'
-          : 'Open the .dmg and drag the app to Applications.',
+            ? `Run ${branding.productName} (Portable .exe). Do not rename the file.`
+            : `Run the Setup .exe and follow the installer. Shortcut name: ${branding.productName}.`
+          : `Open the .dmg and drag ${branding.productName} to Applications.`,
     });
   } catch (err) {
     sendJson(res, 500, { error: err instanceof Error ? err.message : 'Build failed.' });
