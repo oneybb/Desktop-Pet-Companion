@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { PetState, CustomAssets, WidgetCustomizer, PetStats, ActivityRewards } from '../types';
 import { DEFAULT_FOODS, getFoodAssetKey } from '../defaults';
 import { motion, AnimatePresence } from 'motion/react';
@@ -39,6 +39,9 @@ import {
   applyActivityStatBonus,
   normalizeStatBonus,
 } from '../utils/companionSettings';
+import { formatWeightKg, formatWeightScaleShort } from '../utils/weightScale';
+import { beginDesktopWindowDrag } from '../utils/windowDrag';
+import { getPetWidgetShellSurface } from '../utils/widgetSkin';
 import WeightScaleBar from './WeightScaleBar';
 
 interface PetWidgetProps {
@@ -134,8 +137,16 @@ export default function PetWidget({
     return { width: 340, height: 420 };
   });
 
+  const widgetShellSurface = useMemo(
+    () => getPetWidgetShellSurface(customizer),
+    [customizer.theme, customizer.borderStyle, customizer.opacity]
+  );
+
   const interactionShellClass =
-    'electron-no-drag absolute z-40 flex flex-col overflow-hidden rounded-[2rem] shadow-[0_24px_60px_rgba(76,29,149,0.45)] ring-1 ring-white/15 bg-gradient-to-br from-violet-950/98 via-slate-900/97 to-indigo-950/98 backdrop-blur-xl text-slate-100';
+    'electron-no-drag absolute z-[80] flex flex-col overflow-hidden rounded-[2rem] shadow-[0_24px_60px_rgba(76,29,149,0.45)] ring-1 ring-white/15 bg-gradient-to-br from-violet-950/98 via-slate-900/97 to-indigo-950/98 backdrop-blur-xl text-slate-100';
+
+  const menuWidth = Math.min(interactionSize.width, Math.max(220, widgetSize - 8));
+  const menuHeight = Math.min(interactionSize.height, Math.max(240, widgetSize - 8));
 
   const statsPanelWidth = Math.min(200, Math.max(118, Math.round(widgetSize * 0.56)));
   const statsBarHeight = Math.max(4, Math.round(widgetSize * 0.012));
@@ -143,11 +154,13 @@ export default function PetWidget({
   const actionTileClass = (tone: string) =>
     `flex flex-col items-center justify-center gap-0.5 min-h-[48px] rounded-2xl border transition-all cursor-pointer disabled:opacity-35 disabled:pointer-events-none hover:brightness-110 active:scale-[0.97] ${tone}`;
 
-  // Hover state for showing stats HUD overlay
+  // Hover state for showing stats HUD overlay (HUD appears after a short dwell)
   const [isHovered, setIsHovered] = useState(false);
+  const [statsHudDelayedVisible, setStatsHudDelayedVisible] = useState(false);
   const [showWidgetChrome, setShowWidgetChrome] = useState(false);
   const [isWidgetResizing, setIsWidgetResizing] = useState(false);
-  const widgetChromeVisible = showWidgetChrome || isWidgetResizing;
+  const [isDraggingWindow, setIsDraggingWindow] = useState(false);
+  const widgetChromeVisible = showWidgetChrome || isWidgetResizing || isDraggingWindow;
 
   // Laser Chase States
   const [laserPos, setLaserPos] = useState<{ x: number; y: number } | null>(null);
@@ -336,6 +349,17 @@ export default function PetWidget({
     localStorage.setItem('desktop_pet_widget_size_px', String(widgetSize));
   }, [widgetSize]);
 
+  const prevCustomizerScaleRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevCustomizerScaleRef.current;
+    prevCustomizerScaleRef.current = customizer.scale;
+    if (prev === null) return;
+    if (prev === customizer.scale) return;
+    const next =
+      customizer.scale === 'small' ? 220 : customizer.scale === 'large' ? 380 : 300;
+    setWidgetSize(next);
+  }, [customizer.scale]);
+
   useEffect(() => {
     localStorage.setItem('desktop_pet_interaction_size', JSON.stringify(interactionSize));
   }, [interactionSize]);
@@ -386,10 +410,8 @@ export default function PetWidget({
     e.stopPropagation();
     if (laserMode) return;
 
-    // Toggle circular interactive popup overlay options!
     setShowOptionsPopup((prev) => !prev);
 
-    // Give subtle affection hit
     const rect = e.currentTarget.getBoundingClientRect();
     const touchX = e.clientX - rect.left;
     const touchY = e.clientY - rect.top;
@@ -399,8 +421,16 @@ export default function PetWidget({
     setTimeout(() => {
       setHearts((prev) => prev.filter((h) => h.id !== newH.id));
     }, 1200);
+  };
 
-    onLoveIncrease(1);
+  const handleWindowDragPointerDown = (e: React.PointerEvent) => {
+    const started = beginDesktopWindowDrag(e, {
+      onStart: () => setIsDraggingWindow(true),
+      onEnd: () => setIsDraggingWindow(false),
+    });
+    if (!started && window.desktopPet?.isDesktopApp) {
+      e.preventDefault();
+    }
   };
 
   const handleFeed = (foodId: string) => {
@@ -456,15 +486,15 @@ export default function PetWidget({
           outOfStock
             ? 'opacity-40 cursor-not-allowed bg-slate-900/50 border-slate-700'
             : isSelected
-              ? 'bg-amber-500/90 border-amber-300 text-white shadow-lg scale-105 cursor-grab active:cursor-grabbing'
+              ? 'bg-violet-600/90 border-violet-300/70 text-white shadow-lg scale-105 cursor-grab active:cursor-grabbing'
               : mediaCount > 0
-                ? 'bg-emerald-900/70 border-emerald-500/60 hover:border-amber-300 cursor-grab active:cursor-grabbing'
-                : 'bg-slate-800/80 border-slate-600 hover:border-amber-400/60 cursor-grab active:cursor-grabbing'
+                ? 'bg-emerald-900/70 border-emerald-500/60 hover:border-violet-400/50 cursor-grab active:cursor-grabbing'
+                : 'bg-slate-800/80 border-slate-600 hover:border-violet-400/50 cursor-grab active:cursor-grabbing'
         }`}
         title={`${food.name} — ${outOfStock ? 'out of stock' : 'drag onto the cat'}${mediaCount > 0 ? ` (${mediaCount} custom media)` : ''}`}
       >
         <span className={large ? 'text-3xl' : 'text-xl'}>{food.emoji}</span>
-        <span className={`text-[7px] font-black mt-0.5 ${stock < 2 ? 'text-rose-400' : 'text-amber-300'}`}>
+        <span className={`text-[7px] font-black mt-0.5 ${stock < 2 ? 'text-rose-400' : 'text-slate-300'}`}>
           ×{stock}
         </span>
         {!large && (
@@ -514,6 +544,27 @@ export default function PetWidget({
     focusActive ||
     laserMode ||
     (currentInteractState !== 'idle' && currentInteractState !== 'laser');
+
+  const showHoverStatsHud =
+    !laserMode &&
+    (currentInteractState === 'idle' ||
+      currentInteractState === 'sleep' ||
+      currentInteractState === 'studying' ||
+      sleepActive);
+
+  const STATS_HUD_HOVER_DELAY_MS = 1000;
+
+  useEffect(() => {
+    if (!isHovered || !showHoverStatsHud || showOptionsPopup) {
+      setStatsHudDelayedVisible(false);
+      return;
+    }
+    const id = window.setTimeout(() => setStatsHudDelayedVisible(true), STATS_HUD_HOVER_DELAY_MS);
+    return () => {
+      window.clearTimeout(id);
+      setStatsHudDelayedVisible(false);
+    };
+  }, [isHovered, showHoverStatsHud, showOptionsPopup]);
 
   useEffect(() => {
     if (idleResetKey < 1) return;
@@ -570,8 +621,8 @@ export default function PetWidget({
     const onPointerMove = (moveEvent: PointerEvent) => {
       if (!interactionResizeRef.current) return;
       setInteractionSize({
-        width: Math.max(260, Math.min(560, interactionResizeRef.current.width + (moveEvent.clientX - interactionResizeRef.current.startX))),
-        height: Math.max(280, Math.min(620, interactionResizeRef.current.height + (moveEvent.clientY - interactionResizeRef.current.startY))),
+        width: Math.max(220, Math.min(widgetSize - 8, interactionResizeRef.current.width + (moveEvent.clientX - interactionResizeRef.current.startX))),
+        height: Math.max(240, Math.min(widgetSize - 8, interactionResizeRef.current.height + (moveEvent.clientY - interactionResizeRef.current.startY))),
       });
     };
 
@@ -614,35 +665,18 @@ export default function PetWidget({
   };
 
   return (
-    <div className="flex flex-col items-center justify-center p-1 relative select-none overflow-visible">
-      
-      {/* Floating status bubble indicating state */}
+    <div className="flex flex-col items-center justify-center p-1 relative select-none overflow-visible gap-1">
       {!compactMode && (
-        <div className="absolute top-2 z-10 select-none">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={currentInteractState}
-              initial={{ opacity: 0, y: -5 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 5 }}
-              className="bg-slate-900/90 text-[10px] text-indigo-300 font-bold border border-slate-800 px-3 py-1 rounded-full shadow-md flex items-center gap-1.5 backdrop-blur-sm"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
-              {currentInteractState === 'idle' && `${petName} — Cozy 🐾`}
-              {currentInteractState === 'petting' && 'Pet ❤'}
-              {currentInteractState === 'licking' && 'Groom ✨'}
-              {(currentInteractState === 'eating' || String(currentInteractState).startsWith('food:')) && 'Eat 🍕'}
-              {currentInteractState === 'dancing' && 'Dance 🎵'}
-              {currentInteractState === 'studying' && 'Study 📚'}
-              {currentInteractState === 'sleep' && `Sleep ${formatDurationSeconds(sleepRemaining)}`}
-              {currentInteractState === 'laser' && 'Laser 🔴'}
-              {currentInteractState === 'focusReward' && 'Celebrate 🏆'}
-            </motion.div>
-          </AnimatePresence>
-        </div>
+        <StatChangeFlash
+          stats={stats}
+          flashing={statFlash}
+          petName={petName}
+          placement="flow-top"
+          maxWidth={statsPanelWidth}
+        />
       )}
 
-      {/* CORE FRAMELESS PET CONTAINER - No bounding square box! */}
+      {/* CORE FRAMELESS PET CONTAINER */}
       <div
         ref={containerRef}
         onClick={handleContainerClick}
@@ -650,24 +684,66 @@ export default function PetWidget({
         onMouseLeave={() => {
           if (!widgetResizeRef.current) setShowWidgetChrome(false);
         }}
-        className="electron-no-drag relative flex flex-col items-center justify-center transition-all duration-300 select-none cursor-default bg-transparent overflow-visible"
-        style={{ width: widgetSize, height: widgetSize }}
+        className={`electron-no-drag relative flex flex-col items-center justify-center transition-all duration-300 select-none cursor-default overflow-visible ${widgetShellSurface.className}`}
+        style={{ width: widgetSize, height: widgetSize, ...widgetShellSurface.style }}
       >
-        <StatChangeFlash
-          stats={stats}
-          flashing={statFlash}
-          petName={petName}
-          side={compactMode ? 'right' : 'left'}
-          placement={compactMode ? 'inset-bottom' : 'side'}
-          maxWidth={statsPanelWidth}
-        />
+        {!compactMode && (
+          <div className="absolute top-2 z-10 select-none pointer-events-none left-1/2 -translate-x-1/2 max-w-[calc(100%-8px)]">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={currentInteractState}
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 5 }}
+                className="bg-slate-900/90 text-[10px] text-indigo-300 font-bold border border-slate-800 px-3 py-1 rounded-full shadow-md flex items-center gap-1.5 backdrop-blur-sm"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse shrink-0" />
+                <span className="truncate">
+                  {currentInteractState === 'idle' && `${petName} — Cozy 🐾`}
+                  {currentInteractState === 'petting' && 'Pet ❤'}
+                  {currentInteractState === 'licking' && 'Groom ✨'}
+                  {(currentInteractState === 'eating' || String(currentInteractState).startsWith('food:')) && 'Eat 🍕'}
+                  {currentInteractState === 'dancing' && 'Dance 🎵'}
+                  {currentInteractState === 'studying' && 'Study 📚'}
+                  {currentInteractState === 'sleep' && `Sleep ${formatDurationSeconds(sleepRemaining)}`}
+                  {currentInteractState === 'laser' && 'Laser 🔴'}
+                  {currentInteractState === 'focusReward' && 'Celebrate 🏆'}
+                </span>
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        )}
+
         <div
-          className={`electron-drag-region absolute top-1 left-1 z-[70] bg-slate-950/70 text-white/80 border border-slate-700/60 rounded-full px-2.5 py-1 text-[8px] font-black uppercase tracking-wider backdrop-blur-sm cursor-move transition-opacity duration-200 ${
+          role="button"
+          tabIndex={0}
+          onPointerDown={handleWindowDragPointerDown}
+          className={`electron-no-drag absolute top-1 left-1 z-[70] rounded-full px-2 py-1 text-[8px] font-black uppercase tracking-wider
+            bg-slate-950/75 text-white/85 border border-slate-700/60 backdrop-blur-sm cursor-move transition-opacity duration-200 ${
             widgetChromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
           }`}
+          title="Drag to move window"
         >
           Drag
         </div>
+
+        {laserMode && onReturnToIdle && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowOptionsPopup(false);
+              setLaserPos(null);
+              onReturnToIdle();
+            }}
+            className="electron-no-drag absolute top-1 right-1 z-[72] rounded-full px-2 py-1 text-[8px] font-black uppercase tracking-wide
+              bg-slate-950/90 text-red-100 border border-red-400/60 shadow-md cursor-pointer hover:bg-red-950/85 hover:border-red-300 transition-colors"
+            title="Stop laser play and return to idle"
+          >
+            Idle
+          </button>
+        )}
+
         <button
           type="button"
           onPointerDown={beginWidgetResize}
@@ -731,14 +807,15 @@ export default function PetWidget({
               initial={{ opacity: 0, scale: 0.88, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.88, y: 8 }}
+              onClick={(e) => e.stopPropagation()}
               className={interactionShellClass}
               style={{
-                width: Math.min(interactionSize.width, widgetSize + 48),
-                height: Math.min(interactionSize.height, widgetSize + 80),
-                left: `calc(50% - ${Math.min(interactionSize.width, widgetSize + 48) / 2}px)`,
-                top: `calc(50% - ${Math.min(interactionSize.height, widgetSize + 80) / 2}px)`,
-                maxWidth: `min(calc(100vw - 16px), ${widgetSize + 48}px)`,
-                maxHeight: `min(calc(100vh - 16px), ${widgetSize + 80}px)`,
+                width: menuWidth,
+                height: menuHeight,
+                left: `calc(50% - ${menuWidth / 2}px)`,
+                top: `calc(50% - ${menuHeight / 2}px)`,
+                maxWidth: widgetSize - 4,
+                maxHeight: widgetSize - 4,
               }}
             >
               <div className="shrink-0 px-4 pt-3 pb-2 bg-gradient-to-r from-violet-600/35 via-fuchsia-600/20 to-indigo-600/35 border-b border-white/10 rounded-t-[2rem]">
@@ -768,22 +845,22 @@ export default function PetWidget({
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
                     transition={{ duration: 0.2 }}
-                    className="shrink-0 overflow-hidden border-b border-amber-400/35 bg-gradient-to-b from-amber-500/25 to-amber-950/40 shadow-[0_8px_24px_rgba(245,158,11,0.2)]"
+                    className="shrink-0 overflow-hidden border-b border-violet-400/25 bg-gradient-to-b from-violet-500/15 to-slate-950/50"
                   >
                     <div className="px-3 py-2.5 space-y-2">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-[9px] font-black uppercase tracking-wider text-amber-100">
+                        <p className="text-[9px] font-black uppercase tracking-wider text-violet-100">
                           Pick a snack
                         </p>
                         <button
                           type="button"
                           onClick={() => setFeedDrawerOpen(false)}
-                          className="text-[8px] font-bold text-amber-200/80 hover:text-white px-2 py-0.5 rounded-full bg-white/10 hover:bg-white/20 cursor-pointer"
+                          className="text-[8px] font-bold text-violet-200/80 hover:text-white px-2 py-0.5 rounded-full bg-white/10 hover:bg-white/20 cursor-pointer"
                         >
                           Close
                         </button>
                       </div>
-                      <p className="text-[8px] font-medium text-amber-200/80 text-center -mt-1">
+                      <p className="text-[8px] font-medium text-violet-200/70 text-center -mt-1">
                         Drag a treat onto {petName}
                       </p>
                       <div className="grid grid-cols-4 gap-1.5 w-full">
@@ -1131,9 +1208,8 @@ export default function PetWidget({
           )}
         </AnimatePresence>
 
-        {/* FLOAT STATS HUD — scales with widget, stays inside window bounds */}
         <AnimatePresence>
-          {isHovered && !showOptionsPopup && (
+          {statsHudDelayedVisible && showHoverStatsHud && !showOptionsPopup && (
             <motion.div
               initial={{ opacity: 0, scale: 0.94 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -1170,7 +1246,7 @@ export default function PetWidget({
           )}
         </AnimatePresence>
 
-        {/* FLOATING PET AVATAR FRAME - Simple, perfectly steady, no cursor look-at 3D distortion flipping */}
+        {/* FLOATING PET AVATAR FRAME */}
         <motion.div
           animate={{
             x: petPos.x,
@@ -1207,20 +1283,10 @@ export default function PetWidget({
             }
           }}
           className={`relative max-w-[90%] max-h-[90%] flex items-center justify-center p-1.5 cursor-pointer transform hover:scale-105 transition-transform duration-300 drop-shadow-[0_10px_15px_rgba(0,0,0,0.15)] bg-transparent active:scale-98 ${
-            isDraggingOver ? 'ring-4 ring-amber-400/80 rounded-2xl ring-offset-2' : ''
+            showOptionsPopup ? 'z-10' : 'z-20'
           }`}
           style={{ width: widgetSize * 0.78, height: widgetSize * 0.78 }}
         >
-          {isDraggingOver && (
-            <div className="absolute inset-0 bg-amber-500/25 rounded-2xl flex flex-col items-center justify-center animate-pulse z-30 pointer-events-none border-2 border-dashed border-amber-400">
-              <span className="text-white text-[10px] font-black tracking-wider uppercase drop-shadow-[0_1px_3px_rgba(0,0,0,0.8)]">YUM SNACK Dropped! 😋</span>
-            </div>
-          )}
-          {draggingFoodId && (
-            <div className="absolute -top-8 left-1/2 -translate-x-1/2 text-3xl pointer-events-none z-40 animate-bounce">
-              {(assets.foods || DEFAULT_FOODS).find((f) => f.id === draggingFoodId)?.emoji || '🍪'}
-            </div>
-          )}
           {asset.type === 'video' ? (
             <video
               key={asset.url}
@@ -1229,17 +1295,21 @@ export default function PetWidget({
               loop
               muted
               playsInline
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
               referrerPolicy="no-referrer"
-              className="w-full h-full object-contain rounded-full shadow-inner bg-transparent"
+              className="w-full h-full object-contain rounded-full shadow-inner bg-transparent pointer-events-none"
             />
           ) : showCustomMedia ? (
             <img
               key={`${featKey}-${asset.url.slice(0, 48)}`}
               src={asset.url}
               alt={currentInteractState === 'laser' ? 'Laser play' : 'Pet'}
+              draggable={false}
+              onDragStart={(e) => e.preventDefault()}
               referrerPolicy="no-referrer"
               onError={() => setCustomMediaError(true)}
-              className={`w-full h-full object-contain select-none bg-transparent ${
+              className={`w-full h-full object-contain select-none bg-transparent pointer-events-none ${
                 currentInteractState === 'dancing' ? 'animate-bounce' : ''
               }`}
             />
@@ -1256,12 +1326,6 @@ export default function PetWidget({
           {/* Spark effect highlights during focus or petting */}
           {currentInteractState === 'petting' && asset.type === 'image' && (
             <div className="absolute inset-0 flex items-center justify-center bg-rose-500/10 rounded-full animate-ping pointer-events-none" />
-          )}
-
-          {(currentInteractState === 'eating' || String(currentInteractState).startsWith('food:')) && asset.type === 'image' && (
-            <div className="absolute -top-1 right-0 bg-yellow-400 text-slate-900 border border-yellow-250 font-extrabold text-[9px] px-2 py-0.5 rounded-full shadow-md animate-bounce transform rotate-6">
-              MUNCH CHOP! 🍪
-            </div>
           )}
 
           {currentInteractState === 'dancing' && asset.type === 'image' && (
@@ -1314,6 +1378,16 @@ export default function PetWidget({
             {formatDurationSeconds(sleepRemaining)}
           </div>
         )}
+        {compactMode && (
+          <StatChangeFlash
+            stats={stats}
+            flashing={statFlash}
+            petName={petName}
+            side="right"
+            placement="inset-bottom"
+            maxWidth={statsPanelWidth}
+          />
+        )}
         {!compactMode && isActivityBusy && onReturnToIdle && !showOptionsPopup && (
           <button
             type="button"
@@ -1334,9 +1408,9 @@ export default function PetWidget({
             exit={{ opacity: 0, y: -8 }}
             className="electron-no-drag relative z-50 w-full max-w-[360px] mt-2 pointer-events-auto"
           >
-            <div className="bg-slate-950/95 border border-amber-500/50 rounded-2xl shadow-2xl p-2 backdrop-blur-md">
+            <div className="bg-slate-950/95 border border-slate-600/60 rounded-2xl shadow-2xl p-2 backdrop-blur-md">
               <div className="flex items-center justify-between gap-2 mb-2 px-1">
-                <span className="text-[9px] font-black uppercase text-amber-300 tracking-wide">
+                <span className="text-[9px] font-black uppercase text-slate-300 tracking-wide">
                   Drag snack up onto cat ↑
                 </span>
                 <button
@@ -1351,7 +1425,7 @@ export default function PetWidget({
                 {(assets.foods || DEFAULT_FOODS).map((food) => renderFoodDragItem(food, selectedFoodId === food.id))}
               </div>
               {selectedFoodId && (
-                <p className="text-[8px] text-center text-amber-200/80 mt-2 font-bold">
+                <p className="text-[8px] text-center text-slate-400 mt-2 font-bold">
                   Hold & drag{' '}
                   {(assets.foods || DEFAULT_FOODS).find((f) => f.id === selectedFoodId)?.emoji || '🍪'}{' '}
                   onto the cat above

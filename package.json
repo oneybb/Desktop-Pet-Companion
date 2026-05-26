@@ -13,7 +13,7 @@
     "build": "vite build",
     "desktop:pack": "npm run build && electron-builder --dir",
     "desktop:dist": "npm run build && electron-builder",
-    "desktop:dist:win": "npm run build && electron-builder --win portable --x64",
+    "desktop:dist:win": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win portable --x64",
     "desktop:dist:win:setup": "npm run build && electron-builder --win nsis --x64",
     "desktop:dist:mac": "npm run build && electron-builder --mac dmg zip --arm64",
     "preview": "vite preview",
@@ -62,6 +62,9 @@
     "win": {
       "executableName": "DesktopPetCompanion",
       "artifactName": "DesktopPetCompanion-${version}-${os}-${arch}.${ext}",
+      "forceCodeSigning": false,
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false,
       "target": [
         {
           "target": "portable",

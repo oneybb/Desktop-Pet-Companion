@@ -31,7 +31,6 @@ import {
   Monitor, 
   HelpCircle, 
   Files, 
-  Volume2, 
   Settings, 
   Sparkles, 
   RotateCcw,
@@ -630,7 +629,9 @@ export default function CustomizerPanel({
 
             <p className="text-xs text-slate-600 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3 leading-relaxed">
               Each action can change Happiness, Energy, Cleanliness (0–100 bars), and Weight on the scale (0.5–7.5&nbsp;kg,
-              with 4&nbsp;kg in the middle: underweight → fattie boom boom). Use negative kg to slim down.
+              with 4&nbsp;kg in the middle: underweight → fattie boom boom). Use negative kg to slim down.{' '}
+              <strong>Sleep</strong> bonuses apply only after the nap timer finishes (wake early = no bonus), scaled by
+              nap length ÷ 30&nbsp;minutes (same idea as study rewards ÷ 25&nbsp;min).
             </p>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -736,12 +737,16 @@ export default function CustomizerPanel({
             {/* Theme Selector */}
             <div className="space-y-2">
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Widget Theme Skin</label>
+              <p className="text-[10px] text-slate-500">
+                Applies to the rounded pet widget behind your companion (desktop widget and main view).
+              </p>
               <div className="grid grid-cols-4 gap-2">
                 {[
                   { id: 'pastel', name: 'Pastel Light', bg: 'bg-rose-50 border-rose-200' },
                   { id: 'dark', name: 'Cosmic Slate', bg: 'bg-slate-900 border-slate-700' },
                   { id: 'glass', name: 'Glassmorphic', bg: 'bg-indigo-50/50 border-indigo-200' },
                   { id: 'retro-win98', name: 'Windows 98', bg: 'bg-amber-50 border-amber-300' },
+                  { id: 'transparent', name: 'Transparent', bg: 'bg-transparent border-dashed border-slate-300' },
                 ].map((t) => (
                   <button
                     key={t.id}
@@ -760,12 +765,15 @@ export default function CustomizerPanel({
 
             {/* Scale Selector */}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Widget Sizing Scale</label>
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Widget size preset</label>
+              <p className="text-[10px] text-slate-500">
+                Snaps the pet square to a base size. You can still fine-tune with the ↘ resize handle on the widget.
+              </p>
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { id: 'small', label: 'Compact (240px)', text: 'Tiny Screen' },
-                  { id: 'medium', label: 'Regular (320px)', text: 'Balanced' },
-                  { id: 'large', label: 'Comfortable (400px)', text: 'Full Detail' },
+                  { id: 'small', label: 'Compact (220px)', text: 'Smaller footprint' },
+                  { id: 'medium', label: 'Regular (300px)', text: 'Balanced' },
+                  { id: 'large', label: 'Comfortable (380px)', text: 'More detail' },
                 ].map((scaleOpt) => (
                   <button
                     key={scaleOpt.id}
@@ -781,64 +789,6 @@ export default function CustomizerPanel({
                   </button>
                 ))}
               </div>
-            </div>
-
-            {/* Widget Opacity & Window Border */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Background Opacity</label>
-                  <span className="text-xs font-mono text-indigo-600 font-semibold">{Math.round(customizer.opacity * 100)}%</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.2"
-                  max="1.0"
-                  step="0.05"
-                  value={customizer.opacity}
-                  onChange={(e) => setCustomizer((prev) => ({ ...prev, opacity: parseFloat(e.target.value) }))}
-                  className="w-full accent-indigo-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
-                />
-                <span className="text-[10px] text-slate-400 block">Makes pet window transparent on your screen</span>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Window Frame Border</label>
-                <div className="flex rounded-lg border border-slate-200 overflow-hidden bg-slate-50 max-h-10">
-                  {(['none', 'thin', 'double', 'retro'] as const).map((b) => (
-                    <button
-                      key={b}
-                      onClick={() => setCustomizer((prev) => ({ ...prev, borderStyle: b }))}
-                      className={`flex-1 text-[11px] capitalize py-2 font-medium transition-all cursor-pointer ${
-                        customizer.borderStyle === b 
-                          ? 'bg-indigo-600 text-white font-semibold' 
-                          : 'text-slate-600 hover:bg-slate-100'
-                      }`}
-                    >
-                      {b}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Audio volume */}
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                  <Volume2 className="w-3.5 h-3.5" /> Ambient Sound Level
-                </label>
-                <span className="text-xs font-mono text-emerald-600 font-semibold">{Math.round(customizer.soundVolume * 100)}%</span>
-              </div>
-              <input
-                type="range"
-                min="0.0"
-                max="1.0"
-                step="0.05"
-                value={customizer.soundVolume}
-                onChange={(e) => setCustomizer((prev) => ({ ...prev, soundVolume: parseFloat(e.target.value) }))}
-                className="w-full accent-emerald-500 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
-              />
             </div>
 
             <hr className="border-slate-100" />
@@ -1419,7 +1369,7 @@ export default function CustomizerPanel({
                 DESKTOP APP NOTES
               </h4>
               <p className="text-slate-600 leading-relaxed text-[11px]">
-                Choose <strong>Windows 64-bit</strong> when sharing with a PC. Mac exports produce <strong>DesktopPetCompanion-*-Portable.exe</strong> only (no NSIS Setup on Mac). For a Setup installer, build on Windows with <code className="bg-white px-1 py-0.5 rounded font-mono">npm run desktop:dist:win:setup</code>.
+                Choose <strong>Windows 64-bit</strong> when sharing with a PC. Mac exports produce <strong>DesktopPetCompanion-*-Portable.exe</strong> (unsigned — normal for cross-build). Packaging takes a few minutes; if it hangs on “signing”, cancel and rebuild after pulling the latest config. Setup installers: build on Windows with <code className="bg-white px-1 py-0.5 rounded font-mono">npm run desktop:dist:win:setup</code>.
               </p>
               <p className="text-slate-600 leading-relaxed text-[11px]">
                 On Windows, run <strong>DesktopPetCompanion-*-Portable.exe</strong> for a single-file app, or <strong>*-Setup.exe</strong> to install. Do not unzip a Mac build or run partial downloads — that causes “searching for Desktop Pet Companion.exe” and NSIS integrity errors.

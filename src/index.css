@@ -19,3 +19,10 @@ body,
   -webkit-app-region: no-drag;
   touch-action: none;
 }
+
+/* Pet media must not be dragged out of the widget onto the desktop */
+img,
+video {
+  -webkit-user-drag: none;
+  user-select: none;
+}

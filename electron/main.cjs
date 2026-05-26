@@ -55,6 +55,13 @@ ipcMain.handle('desktop-pet:close', () => {
   app.quit();
 });
 
+ipcMain.on('desktop-pet:move-window-by', (event, { dx, dy }) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || typeof dx !== 'number' || typeof dy !== 'number') return;
+  const [x, y] = win.getPosition();
+  win.setPosition(Math.round(x + dx), Math.round(y + dy));
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();

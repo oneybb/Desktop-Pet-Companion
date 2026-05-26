@@ -78,7 +78,7 @@ export interface CustomAssets {
 export interface WidgetCustomizer {
   scale: 'small' | 'medium' | 'large';
   opacity: number; // 0.1 to 1.0
-  theme: 'pastel' | 'dark' | 'glass' | 'retro-win98';
+  theme: 'pastel' | 'dark' | 'glass' | 'retro-win98' | 'transparent';
   borderStyle: 'none' | 'thin' | 'double' | 'retro';
   soundVolume: number; // 0 to 1
   alwaysOnTopGuide: boolean;

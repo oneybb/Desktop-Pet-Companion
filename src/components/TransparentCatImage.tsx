@@ -79,6 +79,8 @@ export default function TransparentCatImage({ src, alt, className, style }: Tran
     <img
       src={processedSrc}
       alt={alt}
+      draggable={false}
+      onDragStart={(e) => e.preventDefault()}
       referrerPolicy="no-referrer"
       className={className}
       style={style}

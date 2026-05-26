@@ -7,6 +7,9 @@ export { formatWeightKg, formatWeightScaleLabel, formatWeightScaleShort, weightT
 
 export const FOCUS_REFERENCE_MINUTES = 25;
 
+/** Nap rewards in settings are per this many seconds of completed sleep (like focus per 25m). */
+export const SLEEP_REFERENCE_SECONDS = 30 * 60;
+
 export const DEFAULT_COMPANION_SETTINGS: CompanionSettings = {
   petName: DEFAULT_PET_NAME,
   decayPerHour: {
@@ -235,6 +238,29 @@ export function applyActivityStatBonus(
     cleanliness: Math.min(100, Math.max(0, prev.cleanliness + b.cleanliness)),
     weight: clampPetWeightKg(prev.weight + b.weight),
   }));
+}
+
+/** Scale sleep (or similar) stat deltas by nap length vs 30 min reference. */
+export function scaleActivityStatBonus(bonus: ActivityStatBonus, durationScale: number): ActivityStatBonus {
+  const s = Math.max(0, durationScale);
+  const b = normalizeStatBonus(bonus);
+  return normalizeStatBonus({
+    happiness: Math.round(b.happiness * s),
+    energy: Math.round(b.energy * s),
+    cleanliness: Math.round(b.cleanliness * s),
+    weight: Math.round(b.weight * s * 100) / 100,
+  });
+}
+
+/** Apply sleep rewards after a full nap; `napDurationSeconds` is the planned nap length. */
+export function applySleepCompletionRewards(
+  napDurationSeconds: number,
+  settings: CompanionSettings,
+  setStats: (fn: (prev: PetStats) => PetStats) => void
+): void {
+  const planned = Math.max(1, Math.min(24 * 3600, napDurationSeconds));
+  const scale = planned / SLEEP_REFERENCE_SECONDS;
+  applyActivityStatBonus(scaleActivityStatBonus(settings.activityRewards.sleep, scale), setStats);
 }
 
 export function formatStatScore(value: number): string {

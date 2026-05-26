@@ -24,7 +24,7 @@ export const BUILTIN_FEATURE_UI = [
   { id: 'licking' as const, name: 'Groom', emoji: '✨', hint: 'Each groom action' },
   { id: 'dancing' as const, name: 'Dance', emoji: '🎵', hint: 'When dance starts' },
   { id: 'laser' as const, name: 'Laser', emoji: '🔴', hint: 'When laser turns on' },
-  { id: 'sleep' as const, name: 'Sleep', emoji: '😴', hint: 'When nap starts' },
+  { id: 'sleep' as const, name: 'Sleep', emoji: '😴', hint: 'After a full nap (scales per 30 min of nap length)' },
 ];
 
 export function getBuiltinInteractionLabel(id: string): string {

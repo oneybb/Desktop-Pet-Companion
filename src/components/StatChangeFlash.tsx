@@ -56,7 +56,7 @@ interface StatChangeFlashProps {
   petName?: string;
   side?: 'left' | 'right';
   /** Keeps flash inside small widget windows (avoids clipping outside Electron bounds). */
-  placement?: 'side' | 'inset-bottom';
+  placement?: 'side' | 'inset-bottom' | 'flow-top';
   maxWidth?: number;
 }
 
@@ -70,6 +70,70 @@ export default function StatChangeFlash({
 }: StatChangeFlashProps) {
   const activeKeys = STAT_ROWS.filter((row) => flashing[row.key] !== undefined);
   const visible = activeKeys.length > 0;
+
+  if (placement === 'flow-top') {
+    return (
+      <AnimatePresence>
+        {visible && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.2 }}
+            className="relative z-[25] shrink-0 w-full flex justify-center pointer-events-none select-none mb-0.5"
+          >
+            <div
+              className="bg-slate-950/88 backdrop-blur-md border border-violet-500/25 rounded-2xl p-2 shadow-xl"
+              style={{ width: maxWidth, maxWidth: 'min(100%, 92vw)' }}
+            >
+              <div className="text-[8px] font-black uppercase tracking-wider text-indigo-400 mb-1.5 truncate text-center">
+                {petName ? `${petName} · ` : ''}Stat change
+              </div>
+              <div className="space-y-1.5">
+                {activeKeys.map((row) => {
+                  const delta = flashing[row.key]!.delta;
+                  const value = stats[row.key];
+                  const positive = delta > 0;
+                  const prevValue = row.isWeight ? value - delta : value - delta;
+                  return (
+                    <div
+                      key={row.key}
+                      className={`rounded-lg px-1.5 py-1 ring-2 ${row.ring} bg-slate-900/80`}
+                    >
+                      <div className={`flex justify-between items-center text-[9px] font-bold ${row.text}`}>
+                        <span>
+                          {row.emoji} {row.label}
+                        </span>
+                        <span
+                          className={`font-mono text-[10px] ${
+                            positive ? 'text-emerald-400' : delta < 0 ? 'text-rose-400' : 'text-slate-400'
+                          }`}
+                        >
+                          {formatDelta(row.key, delta)}
+                          {row.isWeight ? ' kg' : ''}
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden mt-1">
+                        <motion.div
+                          className={`h-full rounded-full ${row.bar}`}
+                          initial={{ width: `${barWidthPercent(row.key, prevValue)}%` }}
+                          animate={{ width: `${barWidthPercent(row.key, value)}%` }}
+                          transition={{ duration: 0.45, ease: 'easeOut' }}
+                        />
+                      </div>
+                      <div className={`text-[8px] font-mono mt-0.5 ${row.text} opacity-80`}>
+                        {formatValueLabel(row.key, value)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    );
+  }
 
   const positionClass =
     placement === 'inset-bottom'
@@ -89,7 +153,7 @@ export default function StatChangeFlash({
           className={`absolute z-[45] pointer-events-none select-none ${positionClass}`}
           style={{ width: maxWidth, maxWidth: '92%' }}
         >
-          <div className="bg-slate-950/92 backdrop-blur-md border border-violet-500/25 rounded-2xl p-2.5 shadow-xl animate-pulse">
+          <div className="bg-slate-950/92 backdrop-blur-md border border-violet-500/25 rounded-2xl p-2.5 shadow-xl">
             <div className="text-[8px] font-black uppercase tracking-wider text-indigo-400 mb-2 truncate">
               {petName ? `${petName} · ` : ''}Stat change
             </div>

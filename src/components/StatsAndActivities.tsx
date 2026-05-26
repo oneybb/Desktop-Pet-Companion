@@ -13,6 +13,8 @@ import {
   durationToSeconds,
   applyActivityStatBonus,
   FOCUS_REFERENCE_MINUTES,
+  SLEEP_REFERENCE_SECONDS,
+  scaleActivityStatBonus,
 } from '../utils/companionSettings';
 import WeightScaleBar from './WeightScaleBar';
 import {
@@ -510,9 +512,28 @@ export default function StatsAndActivities({
               <Moon className="w-3.5 h-3.5" /> Sleep
             </span>
             <span className="text-[9px] text-violet-700 font-bold text-right leading-tight">
-              On start: ⚡{activityRewards.sleep.energy >= 0 ? '+' : ''}{activityRewards.sleep.energy} 😊
-              {activityRewards.sleep.happiness >= 0 ? '+' : ''}
-              {activityRewards.sleep.happiness}
+              {(() => {
+                const secs = durationToSeconds(sleepHours, sleepMinutes, sleepSeconds);
+                const scale = secs / SLEEP_REFERENCE_SECONDS;
+                const s = scaleActivityStatBonus(activityRewards.sleep, scale);
+                return (
+                  <>
+                    After full nap: ⚡{s.energy >= 0 ? '+' : ''}
+                    {s.energy} 😊{s.happiness >= 0 ? '+' : ''}
+                    {s.happiness}
+                    {s.cleanliness !== 0 && (
+                      <>
+                        {' '}
+                        ✨{s.cleanliness >= 0 ? '+' : ''}
+                        {s.cleanliness}
+                      </>
+                    )}
+                    <span className="block text-[8px] font-normal text-slate-500 mt-0.5">
+                      (Inputs ÷ {SLEEP_REFERENCE_SECONDS / 60} min base)
+                    </span>
+                  </>
+                );
+              })()}
             </span>
           </div>
           <p className="text-[9px] text-slate-500">Edit nap bonuses in Customizer Engine → Features.</p>

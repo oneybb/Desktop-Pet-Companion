@@ -18,10 +18,11 @@ import {
   normalizeCompanionSettings,
   syncSnackInventory,
   applyFocusSessionRewards,
-  applyActivityStatBonus,
+  applySleepCompletionRewards,
   FOCUS_REFERENCE_MINUTES,
 } from './utils/companionSettings';
 import { DEFAULT_PET_WEIGHT_KG } from './defaults';
+import { beginDesktopWindowDrag } from './utils/windowDrag';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Heart, 
@@ -269,6 +270,7 @@ export default function App() {
   const [showConfig, setShowConfig] = useState(true);
   const [compactWidgetMode, setCompactWidgetMode] = useState(isDesktopWidget);
   const [isWidgetHovered, setIsWidgetHovered] = useState(false);
+  const [isDraggingBanner, setIsDraggingBanner] = useState(false);
   const resetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sleepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [sleepActive, setSleepActive] = useState(false);
@@ -282,6 +284,12 @@ export default function App() {
   } | null>(null);
 
   const [companionSettings, setCompanionSettings] = useState<CompanionSettings>(() => loadCompanionSettings());
+  const companionSettingsRef = useRef(companionSettings);
+  const napPlannedSecondsRef = useRef(0);
+
+  useEffect(() => {
+    companionSettingsRef.current = companionSettings;
+  }, [companionSettings]);
 
   // Shared Customize Durations (in seconds)
   const [customDuration, setCustomDuration] = useState<number>(() => {
@@ -355,7 +363,7 @@ export default function App() {
         uploadedAssets: Object.fromEntries(
           Object.entries(assets.uploadedAssets).map(([key, files]) => [
             key,
-            sanitizeUploadedFileUrls(files),
+            sanitizeUploadedFileUrls(files as UploadedFile[]),
           ])
         ),
       };
@@ -462,7 +470,7 @@ export default function App() {
       resetTimeoutRef.current = null;
     }
     setLaserMode(false);
-    applyActivityStatBonus(companionSettings.activityRewards.sleep, setStats);
+    napPlannedSecondsRef.current = secs;
     setSleepActive(true);
     setSleepRemaining(secs);
     setInteractState('sleep');
@@ -490,6 +498,7 @@ export default function App() {
         if (prev <= 1) {
           clearSleepTimer();
           setSleepActive(false);
+          applySleepCompletionRewards(napPlannedSecondsRef.current, companionSettingsRef.current, setStats);
           setInteractState('idle');
           return 0;
         }
@@ -627,8 +636,14 @@ export default function App() {
         >
           {/* Floating Hover Controls Banner - Fades in automatically on mouse over */}
           <div 
-            className={`absolute top-4 electron-drag-region bg-slate-900/90 text-white border border-slate-800 px-4 py-2 rounded-2xl shadow-xl flex items-center gap-3.5 backdrop-blur-md transition-all duration-300 z-50 ${
-              isWidgetHovered ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
+            onPointerDown={(e) => {
+              beginDesktopWindowDrag(e, {
+                onStart: () => setIsDraggingBanner(true),
+                onEnd: () => setIsDraggingBanner(false),
+              });
+            }}
+            className={`absolute top-4 electron-no-drag bg-slate-900/90 text-white border border-slate-800 px-4 py-2 rounded-2xl shadow-xl flex items-center gap-3.5 backdrop-blur-md transition-all duration-300 z-50 cursor-move ${
+              isWidgetHovered || isDraggingBanner ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
             }`}
           >
             <div className="text-[10px] font-bold text-slate-300">
@@ -690,7 +705,7 @@ export default function App() {
           {/* Hidden Double-click instructional overlay hint - fades out very cleanly */}
           <div 
             className={`absolute bottom-4 text-[10px] font-medium text-slate-400/80 bg-slate-900/40 px-3 py-1 rounded-full pointer-events-none transition-all duration-300 ${
-              isWidgetHovered ? 'opacity-100' : 'opacity-0'
+              isWidgetHovered || isDraggingBanner ? 'opacity-100' : 'opacity-0'
             }`}
           >
             {isDesktopWidget ? 'Hover at top to drag or quit' : 'Hover near cat to exit widget mode'}

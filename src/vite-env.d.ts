@@ -4,6 +4,7 @@ interface Window {
   desktopPet?: {
     isDesktopApp: boolean;
     close: () => void;
+    moveWindowBy: (dx: number, dy: number) => void;
   };
 }
 

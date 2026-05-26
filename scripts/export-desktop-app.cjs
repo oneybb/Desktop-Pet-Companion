@@ -147,13 +147,13 @@ function pickArtifact(artifacts, buildFor, beforeNames) {
   return chosen;
 }
 
-function runCommand(command, args) {
+function runCommand(command, args, extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: rootDir,
       stdio: 'inherit',
       shell: process.platform === 'win32',
-      env: process.env,
+      env: { ...process.env, ...extraEnv },
     });
 
     child.on('close', (code) => {
@@ -202,7 +202,12 @@ async function buildDesktopPackage(buildFor) {
     return;
   }
 
-  await runCommand(npxCommand, builderArgs);
+  const builderEnv =
+    buildFor === 'win32' && process.platform !== 'win32'
+      ? { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+      : {};
+
+  await runCommand(npxCommand, builderArgs, builderEnv);
 }
 
 async function writeExportSeed(payload) {
